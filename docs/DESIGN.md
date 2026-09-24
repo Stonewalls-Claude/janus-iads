@@ -124,7 +124,10 @@ ELINT (Hound, players' RWR), so every policy aims to minimise it.
    red** (AGM-88, ALARM), plus cruise missiles and guided bombs for point defence.
    **Probe finding (run 1, 2026-09-24):** DCS's land Phalanx (`HEMTT_C-RAM_Phalanx`) never fired at any weapon
    (ARM, guided bomb, rockets, Grad) - only at aircraft. Janus therefore classes C-RAM as radar-directed short-range
-   AAA / point defence against aircraft and helicopters. Whether Tor, Pantsir or Patriot engage ARMs is Phase 0.5.
+   AAA / point defence against aircraft and helicopters. **Run 2:** Tor and Pantsir DO engage ARMs (first shot 9-13 s
+   after launch from an alerted site, ~31 s cold; kill ~20 s after launch; 3 of 5 HARMs downed, but two got through
+   while the site was busy). Patriot tracks weapons but never fires at them. EW radars report a launched weapon
+   within a second via `getDetectedTargets`, which is the sensor input for the plausibility gate.
 
 ### 4.6 Degradation and autonomy
 - Losing a C2 or its comms link means subordinate nodes switch to **autonomous mode** after a
@@ -317,7 +320,7 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 | Phase | Delivers | Exit gate |
 |---|---|---|
 | 0 | Unit data generated from the DCS datamine + Olympus databases; battery preset data with sources; project skeleton, build, harness; C-RAM/AI engagement probe mission | **Done 2026-09-24.** Probe run 1 (`docs/PROBE_RESULTS.md`): C-RAM never engages weapons in DCS (aircraft only); Kh-31P flight 102 s, unopposed |
-| 0.5 | Clean probe rerun: no air-to-air weapons, blue sites + red attackers south, red sites + blue attackers ~150 nm north; Tor/Pantsir/Patriot vs ARM, weapon-tracking check via `getDetectedTargets` | Runs alongside Phase 1; Phase 3 (HARM defence) needs its numbers |
+| 0.5 | Clean probe rerun (JANUS_PROBE_V2.miz): no air-to-air weapons, sites ~250 km apart, weapon-tracking sweep | **Run 2 done 2026-09-24** (`docs/PROBE_RESULTS.md`): Tor/Pantsir shoot HARMs 9-13 s after launch (31 s cold), 3 of 5 killed; EWR tracks a HARM 0.4 s after launch; C-RAM and Patriot track but never fire at weapons. Open: Patriot vs Kh-31P/Kh-22 (red ARM shooters never launched) -> v3 probe with explicit AttackGroup tasks |
 | 1 | Network model, links, C2/comms/power, EW, batteries, autonomy, EMCON | Harness green; red network runs on the bench |
 | 2 | Track picture, WTA with kill probability, handoffs | Beats Skynet on the bench, excluding HARM effects |
 | 3 | Launch detection and HARM defence ladder, point defence, C-RAM | Beats Skynet on the full bench, repeated runs |

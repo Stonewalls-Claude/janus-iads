@@ -15,3 +15,7 @@ Foundation only; Janus does not control sites yet.
 ## 0.1.1-phase0 (2026-09-24)
 - Probe run 1 results (docs/PROBE_RESULTS.md): C-RAM does not engage weapons in DCS; design 4.5 amended. Phase 0.5 (clean rerun) added.
 - tools/probe_report.py: shooter type parsing fixed.
+
+## 0.1.2-phase0.5 (2026-09-24)
+- Probe v0.3 (JANUS_PROBE_V2.miz): no A/A weapons, sites 250 km apart, weapon-tracking sweep. Run 2 results in docs/PROBE_RESULTS.md: Tor/Pantsir engage HARMs in 9-13 s; EWR tracks weapons at launch; C-RAM/Patriot never fire at weapons.
+- Rule: every test run gets its own numbered .miz, log and Tacview.
