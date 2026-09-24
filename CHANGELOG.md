@@ -19,3 +19,6 @@ Foundation only; Janus does not control sites yet.
 ## 0.1.2-phase0.5 (2026-09-24)
 - Probe v0.3 (JANUS_PROBE_V2.miz): no A/A weapons, sites 250 km apart, weapon-tracking sweep. Run 2 results in docs/PROBE_RESULTS.md: Tor/Pantsir engage HARMs in 9-13 s; EWR tracks weapons at launch; C-RAM/Patriot never fire at weapons.
 - Rule: every test run gets its own numbered .miz, log and Tacview.
+
+## design 0.6 (2026-09-24)
+- DESIGN 4.5 generalised to all anti-radiation missiles (Shrike to Kh-31P); new 4.5A crew-awareness model (radar/behaviour/eyes/network cues, tiers A-C) and 4.5B dark-time defaults (S-300PS, SA-11, SA-5, SA-2/3); decision 8.

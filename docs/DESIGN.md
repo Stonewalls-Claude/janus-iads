@@ -1,4 +1,4 @@
-# Janus IADS — design (draft 0.5, 2026-09-24)
+# Janus IADS — design (draft 0.6, 2026-09-24)
 
 *Janus: the two-faced Roman god who looks both ways at once.*
 Janus runs integrated air defence networks for **both coalitions in the same mission**. It is one
@@ -104,12 +104,23 @@ Doctrine picks a policy per node role: **dark until cued**, **periodic search**,
 (sites take turns emitting) or **always on**. Emitting time is the main cost of being found by
 ELINT (Hound, players' RWR), so every policy aims to minimise it.
 
-### 4.5 Launch detection and HARM defence
-1. `S_EVENT_SHOT` gives the weapon, the launcher and (for most guided weapons) the target at once.
-2. **Plausibility gate:** a defender may react only if one of its network's emitting sensors holds
-   the **launcher or the weapon** within its detection envelope and line of sight. The reaction is
-   delayed by doctrine and crew skill (e.g. veteran 2–4 s, green 8–15 s, plus random spread). This
-   keeps it fair.
+### 4.5 Launch detection and anti-radiation missile (ARM) defence
+"ARM" means **every** anti-radiation weapon, not just HARM: AGM-45 Shrike, AGM-78 Standard ARM, AGM-88 HARM, ALARM,
+Kh-58, Kh-25MP/MPU, Kh-28, Kh-31P and any future one. In DCS they are identified by
+`weapon:getDesc().guidance == Weapon.GuidanceType.RADAR_PASSIVE`, so a new ARM works without a code change. Per-type
+data (range, speed, whether it remembers the emitter's position after shutdown, visible motor smoke) lives in a small
+table built from the DCS datamine, like the unit database.
+
+**An ARM's job is suppression, not only kills.** A site that goes dark because it believes an ARM is coming is
+suppressed even if nothing was fired. Janus models that, the bench scores it (emitting time lost), and it is why
+knowing *when* a crew notices matters as much as what it does next.
+
+1. **Ground truth vs crew knowledge.** `S_EVENT_SHOT` and the weapon object tell Janus where the missile really is.
+   That is the simulation's view, never the operators'. Nothing reacts to it until the awareness model (4.5A) says a
+   crew has noticed. DCS's own detection is too generous for this (probe run 2: a 1970s 1L13 VHF radar "tracked" a
+   HARM 0.4 s after launch), so Janus filters it.
+2. **Plausibility gate:** a site reacts only once 4.5A has made it aware: by its own sensors, by a cue, or by a network
+   warning. The reaction is delayed by doctrine and crew tier (GRN/REG/VET/ACE).
 2a. **Short confirmation, not a long one.** Before a site commits to the response ladder, it needs a
    brief confirmation: the weapon must still be tracked, and be closing on an emitter, for a
    doctrine-set number of sensor updates (default ~3), or be held by two sensors. This stops false
@@ -117,17 +128,60 @@ ELINT (Hound, players' RWR), so every policy aims to minimise it.
    delay we measured in Medusa 1.5.0. Doctrine can allow mistakes: green crews may react late or to
    the wrong threat, on purpose. *(The Medusa author's next version uses 5 scans, ~15 s; ours is
    triggered by the launch event, so it can be shorter.)*
-3. **Response ladder** (per doctrine, per battery): point defence engages → radar shutdown with a
-   timed restart → decoy emission from a spare radar → relocation of mobile systems → accept the hit
-   (for sites ordered to hold).
-4. The same path handles **red ARMs against blue** (Kh-58, Kh-25MPU, Kh-31P) and **blue ARMs against
-   red** (AGM-88, ALARM), plus cruise missiles and guided bombs for point defence.
+3. **Response ladder** (per doctrine, per battery): point defence engages → radar shutdown for the time in 4.5B →
+   decoy emission from a spare radar → relocation of mobile systems → accept the hit (for sites ordered to hold).
+   Shutting down has a price: with command-guided SAMs (SA-2, SA-3, SA-5, SA-6, S-300 track-via-missile) a missile in
+   flight is lost when its guidance radar goes dark, so the ladder weighs "finish this shot" against "save the radar".
+4. The same path handles **red ARMs against blue** and **blue ARMs against red**, plus cruise missiles and guided
+   bombs for point defence.
    **Probe finding (run 1, 2026-09-24):** DCS's land Phalanx (`HEMTT_C-RAM_Phalanx`) never fired at any weapon
    (ARM, guided bomb, rockets, Grad) - only at aircraft. Janus therefore classes C-RAM as radar-directed short-range
    AAA / point defence against aircraft and helicopters. **Run 2:** Tor and Pantsir DO engage ARMs (first shot 9-13 s
    after launch from an alerted site, ~31 s cold; kill ~20 s after launch; 3 of 5 HARMs downed, but two got through
    while the site was busy). Patriot tracks weapons but never fires at them. EW radars report a launched weapon
    within a second via `getDetectedTargets`, which is the sensor input for the plausibility gate.
+
+
+### 4.5A ARM awareness model (how a crew finds out)
+Four cues, each checked per site at the scheduler rate. The first one to fire makes the site aware.
+
+| Cue | Works for | Model |
+|---|---|---|
+| **Radar sees the missile** | only radars that can track small, fast targets (tier A/B below) | the weapon must be within `detectionRange × (RCS_arm / RCS_ref)^(1/4)` (radar range scales with the fourth root of target size; HARM-class ≈ 0.1 m² vs a fighter-sized reference gives roughly 35–40 % of the listed range), inside the radar's elevation limits and line of sight; then a per-scan chance that rises with crew tier and falls with how many tracks the crew already has |
+| **Behaviour cue** | every site, including tier C | a known SEAD type or ARM carrier inside its ARM's range, nose on the site, or popping up / pulling up; fires *before* any launch, so pre-emptive shutdowns (real suppression) happen. Nervous or green crews trigger more often |
+| **Eyes** | optical channels (Tor, Pantsir, Roland, Rapier trackers) and doctrine "observers" (NVA) | short range, daylight, visibility from the mission weather; much easier for smoky motors (Shrike) |
+| **Network warning** | any site linked to C2 | another node that became aware passes it on after a comms delay; nothing arrives if the C2/comms path is down (4.6) |
+
+| Tier | Systems | Sees the missile on radar? | Main cue | Typical response |
+|---|---|---|---|---|
+| **A**: built to kill precision weapons | Tor, Pantsir | yes, tens of km at best | radar + optics | engage it; site keeps emitting |
+| **B**: sees it late, can't reliably hit it | S-300PS, SA-11, SA-6, Hawk, Patriot | sometimes, late in the dive | radar (late) + behaviour + network | go dark, decoy, or accept |
+| **C**: effectively blind to it | SA-2, SA-3, SA-5, older EW radars | rarely | behaviour, observers, network | go dark on suspicion; crew tier decides |
+
+Probe v3 logs the range at which each DCS radar first holds each weapon, so the filter above is tuned against
+measured DCS behaviour instead of guesses. All figures here are gameplay defaults from open sources, not published
+system data, and every one is a doctrine setting.
+
+### 4.5B Going dark: how long
+Dark time = **predicted time until impact + a margin**, then the system's **restart time**. The prediction uses the
+estimated launch time (when the crew noticed, not the real launch) and the ARM type's speed; its error grows for
+lower-tier crews. A site comes back early if the network learns the missile died (point defence killed it). While a
+suspected ARM shooter stays in range and nose-on, the site stays dark: that is suppression working. Doctrine sets a
+**maximum dark time**; after it the site restarts, relocates, or stays down (Soviet PVO waits; NVA "blinks" back up).
+
+| System | What goes dark | Minimum | Typical | Restart to emitting | Other options |
+|---|---|---|---|---|---|
+| **S-300PS (SA-10)** | the engagement radar (30N6 Flap Lid); the battalion can keep searching with the 64N6 if it is not the target | 30 s | 60–120 s (a HARM from long range flies about a minute or more; the probe's Kh-31P took 102 s) | ~10 s from hot standby | hand the engagement to another battery; relocate (pack and set-up are each commonly quoted at ~5 min) |
+| **SA-11 Buk** | only the targeted TELAR: each TELAR has its own radar, so the others and the Snow Drift stay up | 20 s | 45–90 s | ~5–10 s | the other TELARs cover; shoot-and-scoot, ~5 min to move |
+| **SA-5 (S-200)** | the 5N62 Square Pair illuminator | 60 s | 90–180 s (usually targeted by long-range ARMs, and it cannot move) | ~20–30 s | none: fixed site; depends on EW and decoys |
+| SA-2 / SA-3 (for comparison) | Fan Song / Low Blow | 15 s | Soviet: until impact + margin; NVA: 20–60 s "blinks" | ~10 s | dummy sites, relocation over hours, not minutes |
+
+**Shrike and other early ARMs.** They suppress just the same, and Janus treats them the same way. The differences are
+all in the per-type data: shorter range (the shooter has to come closer, so behaviour cues fire more easily), a visible
+motor trail (the "eyes" cue works), and, in the real Shrike, no memory of the emitter's position, so a site that goes
+dark in time makes it miss. That is why short NVA "blinks" worked against Shrike and were far riskier against later ARMs
+with memory. Whether DCS's Shrike loses guidance when the radar switches off is measured in probe v3 before Janus
+relies on it.
 
 ### 4.6 Degradation and autonomy
 - Losing a C2 or its comms link means subordinate nodes switch to **autonomous mode** after a
@@ -305,6 +359,9 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
    - Both sides at once: performance and correctness.
    - C-RAM capability check: how often DCS actually engages HARMs, cruise missiles, guided bombs
      and rockets, so the docs only promise what DCS delivers.
+   - Probe v3 (`JANUS_PROBE_V3.miz`): range at which each radar first holds each weapon (tunes 4.5A), Patriot vs
+     Kh-31P/Kh-22, and whether a Shrike/HARM keeps guiding after its target radar goes dark.
+   - Every run gets its own numbered `.miz`, log and Tacview; mission files are never overwritten.
    - Vietnam: an NVA SA-2/AAA network against a US Iron Hand/strike package (Shrike-armed).
 4. After each DCS patch, rerun the suite and the bench before a release is marked compatible.
 
@@ -339,3 +396,6 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 6. DLC: Currenthill = free, used freely; WWII Assets Pack units allowed with a declared `requires`, doc box, spawn
    refusal without the DLC, and a setup-report warning (see 4.8A).
 7. The probe script shares the `JANUS` namespace (`JANUS.probe`) so the one-global rule holds everywhere.
+8. ARM defence covers every anti-radiation weapon (Shrike through Kh-31P), identified by passive-radar guidance.
+   Crews react to what they could plausibly notice (4.5A), never to the weapon object itself; dark time follows 4.5B;
+   ARM success is scored as suppression (emitting time lost), not only kills (decided 2026-09-24).
