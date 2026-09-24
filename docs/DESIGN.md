@@ -121,7 +121,10 @@ ELINT (Hound, players' RWR), so every policy aims to minimise it.
    timed restart → decoy emission from a spare radar → relocation of mobile systems → accept the hit
    (for sites ordered to hold).
 4. The same path handles **red ARMs against blue** (Kh-58, Kh-25MPU, Kh-31P) and **blue ARMs against
-   red** (AGM-88, ALARM), plus cruise missiles and guided bombs for point defence and C-RAM.
+   red** (AGM-88, ALARM), plus cruise missiles and guided bombs for point defence.
+   **Probe finding (run 1, 2026-09-24):** DCS's land Phalanx (`HEMTT_C-RAM_Phalanx`) never fired at any weapon
+   (ARM, guided bomb, rockets, Grad) - only at aircraft. Janus therefore classes C-RAM as radar-directed short-range
+   AAA / point defence against aircraft and helicopters. Whether Tor, Pantsir or Patriot engage ARMs is Phase 0.5.
 
 ### 4.6 Degradation and autonomy
 - Losing a C2 or its comms link means subordinate nodes switch to **autonomous mode** after a
@@ -313,7 +316,8 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 ## 9. Phases
 | Phase | Delivers | Exit gate |
 |---|---|---|
-| 0 | Unit data generated from the DCS datamine + Olympus databases; battery preset data with sources; project skeleton, build, harness; C-RAM/AI engagement probe mission | Unit list and presets verified; probe results logged. **Status 2026-09-24:** everything delivered and lint-clean except the probe *run* — `tests/probe/janus_probe.lua` and the mission layout exist; the .miz still has to be built and flown (see `tests/probe/README.md`) |
+| 0 | Unit data generated from the DCS datamine + Olympus databases; battery preset data with sources; project skeleton, build, harness; C-RAM/AI engagement probe mission | **Done 2026-09-24.** Probe run 1 (`docs/PROBE_RESULTS.md`): C-RAM never engages weapons in DCS (aircraft only); Kh-31P flight 102 s, unopposed |
+| 0.5 | Clean probe rerun: no air-to-air weapons, blue sites + red attackers south, red sites + blue attackers ~150 nm north; Tor/Pantsir/Patriot vs ARM, weapon-tracking check via `getDetectedTargets` | Runs alongside Phase 1; Phase 3 (HARM defence) needs its numbers |
 | 1 | Network model, links, C2/comms/power, EW, batteries, autonomy, EMCON | Harness green; red network runs on the bench |
 | 2 | Track picture, WTA with kill probability, handoffs | Beats Skynet on the bench, excluding HARM effects |
 | 3 | Launch detection and HARM defence ladder, point defence, C-RAM | Beats Skynet on the full bench, repeated runs |

@@ -9,7 +9,7 @@ import sys
 from collections import defaultdict
 
 LINE = re.compile(r'JANUS_PROBE (?P<t>[\d.]+) (?P<kind>[A-Z-]+) (?P<rest>.*)')
-KV = re.compile(r'(\w+)=(\S+(?: \([^)]*\))?)')
+KV = re.compile(r'(\w+)=(.*?)(?= \w+=|$)')
 
 
 def main():
@@ -26,8 +26,10 @@ def main():
         t, kind, rest = float(m.group('t')), m.group('kind'), m.group('rest')
         kv = dict(KV.findall(rest))
         if kind == 'SHOT':
-            shots.append((t, kv.get('weapon', '?'), kv.get('shooter', '?')))
-            per_defender[kv.get('shooter', '?')]['shots'] += 1
+            st = re.search(r'\(([^)]*)\)$', kv.get('shooter', ''))
+            stype = st.group(1) if st else kv.get('shooter', '?')
+            shots.append((t, kv.get('weapon', '?'), stype))
+            per_defender[stype]['shots'] += 1
         elif kind == 'HIT-WEAPON':
             wt = re.search(r'a weapon: ([^)]*)\)', rest)
             hits_on_weapons.append((t, kv.get('shooter', '?'), wt.group(1) if wt else '?'))
@@ -35,7 +37,9 @@ def main():
         elif kind == 'HIT':
             per_defender[kv.get('shooter', '?')]['hitsOnUnits'] += 1
 
-    out = ['# Probe results\n', '## Weapons engaged by defenders\n',
+    out = ['# Probe results\n',
+           'Note: DCS raises S_EVENT_SHOT for missiles, bombs and rockets, not for gun rounds, so gun "shots" are 0 '
+           'while their hits are counted.\n', '## Weapons engaged by defenders\n',
            '| Attacking weapon | Launched | Hit by a defender | First hit after launch (s) | Defender |', '|---|---|---|---|---|']
     by_weapon = defaultdict(list)
     for t, w, s in shots:

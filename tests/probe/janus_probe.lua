@@ -5,23 +5,28 @@
 -- Nothing here fires or controls a defender: DCS AI does what it does; the probe only records.
 -- Lua 5.1, sanitized environment, one global (JANUS).
 --
--- Layout (Syria, anchored on Bassel Al-Assad / Latakia; x north, z east, metres):
---   BLUE site B1 (inland east): 2x C-RAM, 2x Avenger, a Hawk search+track radar as ARM bait (no launchers),
---                              4 trucks as the bomb/rocket/artillery target
---   BLUE site B2 (30 km south of B1): full Patriot battery (its radar is the ARM bait for wave 2)
---   RED  site R1 (north-east):   2x Tor, 2x Pantsir, a 1L13 EWR as ARM bait, 4 trucks
---   Waves (all AI):  1  240 s  blue F-16C 4x AGM-88C vs R1        | red Su-24M 2x Kh-58U vs B1
---                    2  480 s  red Su-34 2x Kh-31P vs B2 (Patriot)  | red Tu-22M3 3x Kh-22 vs B1
---                    3  720 s  red Su-34 4x KAB-500Kr vs B1 trucks
---                    4  960 s  red Mi-24P S-8 rockets vs B1 trucks
---                    5 1200 s  red BM-21 Grad battery fires at B1 trucks from 15 km (does C-RAM count rockets?)
---                    6 1440 s  red Su-25T 4x FAB-250 dumb bombs vs B1 trucks
+-- Layout v2 / Phase 0.5 (Syria, anchored on Bassel Al-Assad / Latakia; x north, z east, metres). Run 1 showed that
+-- air-to-air armed attackers meet each other and fight instead of attacking the sites, so now:
+--   * NO air-to-air weapons on any aircraft.
+--   * BLUE site B1 is 60 km SOUTH of the anchor: full Patriot battery + 2x C-RAM + 2x Avenger + 4 trucks (one
+--     defended point; the Patriot radar is the ARM bait). RED attackers spawn EAST of B1 and attack westwards.
+--   * RED site R1 is 190 km NORTH of the anchor (~135 nm from B1, as far as the map allows): 2x Tor, 2x Pantsir,
+--     1L13 EWR bait, 4 trucks. BLUE attackers spawn WEST of R1 over the sea and attack eastwards.
+--   The two packages are never within 200 km of each other.
+--   Waves:  1  240 s  blue F-16C 4x AGM-88C vs R1        | red Su-24M 2x Kh-58U vs B1
+--           2  480 s  red Su-34 4x Kh-31P vs B1 (Patriot) | red Tu-22M3 3x Kh-22 vs B1 trucks
+--           3  720 s  red Su-34 4x KAB-500Kr vs B1 trucks
+--           4  960 s  red Mi-24P S-8 rockets vs B1 trucks
+--           5 1200 s  red BM-21 Grad battery fires at B1 trucks from 15 km
+--           6 1440 s  red Su-25T 4x FAB-250 dumb bombs vs B1 trucks
+--   Every 5 s the defenders' controllers are asked for detected targets; any WEAPON object seen is logged once
+--   (TRACK-WEAPON), so we learn whether DCS radars track incoming missiles/bombs at all, not just whether they shoot.
 --   Summary lines every 60 s; run for 30 minutes of mission time.
 
 JANUS = JANUS or {}
 JANUS.probe = JANUS.probe or {}
 local P = JANUS.probe
-P.VERSION = "0.2.0"
+P.VERSION = "0.3.0"
 
 local TAG = "JANUS_PROBE"
 local env_info = env.info
@@ -107,7 +112,7 @@ local function summary()
       parts[#parts + 1] = string_format("%s: shots=%d hitsOnWeapons=%d hitsOnUnits=%d", shooter, s.shots, s.hitsOnWeapons, s.hitsOnUnits)
     end
     table.sort(parts)
-    log("SUMMARY " .. table.concat(parts, " | "))
+    log("SUMMARY trackedWeapons=" .. tostring(P.trackedWeapons) .. " | " .. table.concat(parts, " | "))
   end)
   return timer_getTime() + 60
 end
@@ -197,25 +202,55 @@ local function seadTask()
 end
 
 -- ------------------------------------------------------------------ sites
-local B1 = { x = x0 - 15000, z = z0 + 40000 }   -- blue point-defence site
-local B2 = { x = x0 - 45000, z = z0 + 40000 }   -- blue Patriot site
-local R1 = { x = x0 + 40000, z = z0 + 55000 }   -- red point-defence site
+local B1 = { x = x0 - 60000, z = z0 + 30000 }    -- blue site, south (inland of Tartus)
+local R1 = { x = x0 + 190000, z = z0 + 20000 }   -- red site, far north
 
-ground(BLUE, "PD C-RAM Probe", B1.x, B1.z, { { "HEMTT_C-RAM_Phalanx", 300, 300 }, { "HEMTT_C-RAM_Phalanx", -300, -300 } })
-ground(BLUE, "PD Avenger Probe", B1.x, B1.z, { { "M1097 Avenger", 300, -300 }, { "M1097 Avenger", -300, 300 } })
-ground(BLUE, "EW Hawk Bait B1", B1.x, B1.z, { { "Hawk sr", 0, 150 }, { "Hawk tr", 0, -150 } })
-ground(BLUE, "Target Trucks B1", B1.x, B1.z, { { "Ural-375", 40, 0 }, { "Ural-375", -40, 0 }, { "Ural-375", 0, 40 }, { "Ural-375", 0, -40 } })
-ground(BLUE, "SAM Patriot Probe", B2.x, B2.z, {
+ground(BLUE, "SAM Patriot Probe", B1.x, B1.z, {
   { "Patriot str", 0, 0 }, { "Patriot ECS", 100, 0 }, { "Patriot EPP", 150, 50 }, { "Patriot AMG", 150, -50 },
-  { "Patriot ln", 300, 300 }, { "Patriot ln", 300, -300 }, { "Patriot ln", -300, 300 }, { "Patriot ln", -300, -300 } })
+  { "Patriot ln", 400, 400 }, { "Patriot ln", 400, -400 }, { "Patriot ln", -400, 400 }, { "Patriot ln", -400, -400 } })
+ground(BLUE, "PD C-RAM Probe", B1.x, B1.z, { { "HEMTT_C-RAM_Phalanx", 250, 0 }, { "HEMTT_C-RAM_Phalanx", -250, 0 } })
+ground(BLUE, "PD Avenger Probe", B1.x, B1.z, { { "M1097 Avenger", 0, 250 }, { "M1097 Avenger", 0, -250 } })
+ground(BLUE, "Target Trucks B1", B1.x + 600, B1.z, { { "Ural-375", 40, 0 }, { "Ural-375", -40, 0 }, { "Ural-375", 0, 40 }, { "Ural-375", 0, -40 } })
 ground(RED, "PD Tor Probe", R1.x, R1.z, { { "Tor 9A331", 300, 300 }, { "Tor 9A331", -300, -300 } })
 ground(RED, "PD Pantsir Probe", R1.x, R1.z, { { "CHAP_PantsirS1", 300, -300 }, { "CHAP_PantsirS1", -300, 300 } })
 ground(RED, "EW Bait R1", R1.x, R1.z, { { "1L13 EWR", 0, 0 } })
 ground(RED, "Target Trucks R1", R1.x, R1.z, { { "Ural-375", 40, 0 }, { "Ural-375", -40, 0 }, { "Ural-375", 0, 40 }, { "Ural-375", 0, -40 } })
 
+-- ------------------------------------------------------------------ radar tracking sweep
+local DEFENDERS = { "SAM Patriot Probe", "PD C-RAM Probe", "PD Avenger Probe", "PD Tor Probe", "PD Pantsir Probe", "EW Bait R1" }
+local seenWeapon = {}
+P.trackedWeapons = 0
+local function sweep()
+  safeCall("sweep", function()
+    for i = 1, #DEFENDERS do
+      local g = Group.getByName(DEFENDERS[i])
+      if g and g:isExist() then
+        local c = g:getController()
+        local dets = c and c:getDetectedTargets() or {}
+        for j = 1, #dets do
+          local obj = dets[j].object
+          if obj and obj:isExist() then
+            local okc, cat = pcall(Object.getCategory, obj)
+            if okc and cat == Object.Category.WEAPON then
+              local key = tostring(obj)
+              if not seenWeapon[key] then
+                seenWeapon[key] = true
+                P.trackedWeapons = P.trackedWeapons + 1
+                log(string_format("TRACK-WEAPON by=%s weapon=%s visible=%s type=%s", DEFENDERS[i], safeType(obj),
+                  tostring(dets[j].visible), tostring(dets[j].type)))
+              end
+            end
+          end
+        end
+      end
+    end
+  end)
+  return timer_getTime() + 5
+end
+timer_schedule(sweep, nil, timer_getTime() + 10)
+
 -- ------------------------------------------------------------------ weapons (CLSIDs from the DCS datamine)
 local AGM88C = "{B06DD79A-F21E-4EB9-BD9D-AB3844618C93}"
-local AIM120C = "{40EF17B7-F508-45de-8566-6FFECC0C1AB8}"
 local KH58U = "{FE382A68-8620-4AC0-BDF5-709BFE3977D7}"
 local KH31P = "{X-31P}"
 local KH22 = "{12429ECF-03F0-4DF6-BCBD-5D38B6343DE1}"
@@ -232,24 +267,24 @@ end
 -- wave 1: ARMs both ways
 at(240, "1 ARM: blue F-16C AGM-88C vs R1; red Su-24M Kh-58U vs B1", function()
   air(BLUE, PLANE, "Weasel Probe", "F-16C_50", 2, "SEAD",
-    { [1] = { CLSID = AIM120C }, [3] = { CLSID = AGM88C }, [4] = { CLSID = AGM88C }, [6] = { CLSID = AGM88C }, [7] = { CLSID = AGM88C }, [9] = { CLSID = AIM120C } },
-    3249, { { x0 - 20000, z0 - 90000 }, { R1.x - 20000, R1.z - 30000 }, { R1.x - 20000, R1.z + 30000 }, { x0 - 20000, z0 - 90000 } },
+    { [3] = { CLSID = AGM88C }, [4] = { CLSID = AGM88C }, [6] = { CLSID = AGM88C }, [7] = { CLSID = AGM88C } },
+    3249, { { R1.x, R1.z - 120000 }, { R1.x, R1.z - 30000 }, { R1.x + 15000, R1.z - 30000 }, { R1.x, R1.z - 120000 } },
     25000 * FT, "BARO", 240, seadTask())
   air(RED, PLANE, "Fencer Probe", "Su-24M", 2, "SEAD",
     { [2] = { CLSID = KH58U }, [7] = { CLSID = KH58U } },
-    11700, { { B1.x + 20000, B1.z + 140000 }, { B1.x + 20000, B1.z + 30000 }, { B1.x + 20000, B1.z + 140000 } },
+    11700, { { B1.x + 10000, B1.z + 140000 }, { B1.x + 10000, B1.z + 30000 }, { B1.x + 10000, B1.z + 140000 } },
     22000 * FT, "BARO", 250, seadTask())
 end)
 
 -- wave 2: Kh-31P vs Patriot, Kh-22 vs B1
-at(480, "2 ARM/AShM: red Su-34 Kh-31P vs B2 (Patriot); red Tu-22M3 Kh-22 vs B1", function()
+at(480, "2 ARM/AShM: red Su-34 Kh-31P vs B1 (Patriot); red Tu-22M3 Kh-22 vs B1 trucks", function()
   air(RED, PLANE, "Fullback SEAD Probe", "Su-34", 2, "SEAD",
     { [3] = { CLSID = KH31P }, [4] = { CLSID = KH31P }, [8] = { CLSID = KH31P }, [9] = { CLSID = KH31P } },
-    9800, { { B2.x - 10000, B2.z + 140000 }, { B2.x - 10000, B2.z + 35000 }, { B2.x - 10000, B2.z + 140000 } },
+    9800, { { B1.x - 10000, B1.z + 140000 }, { B1.x - 10000, B1.z + 35000 }, { B1.x - 10000, B1.z + 140000 } },
     22000 * FT, "BARO", 250, seadTask())
   air(RED, PLANE, "Backfire Probe", "Tu-22M3", 1, "Antiship Strike",
     { [1] = { CLSID = KH22 }, [3] = { CLSID = KH22 }, [5] = { CLSID = KH22 } },
-    50000, { { B1.x + 40000, B1.z + 200000 }, { B1.x + 40000, B1.z + 60000 }, { B1.x + 40000, B1.z + 200000 } },
+    50000, { { B1.x + 30000, B1.z + 200000 }, { B1.x + 30000, B1.z + 60000 }, { B1.x + 30000, B1.z + 200000 } },
     30000 * FT, "BARO", 260, attackGroupTask("Target Trucks B1"))
 end)
 
@@ -288,4 +323,4 @@ end)
 
 at(1800, "END: probe complete at 30 min", function() summary() end)
 
-log("probe " .. P.VERSION .. " loaded on Syria; sites spawned, 6 waves scheduled (240 s apart from 240 s)")
+log("probe " .. P.VERSION .. " loaded on Syria (v2 layout: no A/A, sites ~250 km apart); 6 waves scheduled (240 s apart from 240 s)")

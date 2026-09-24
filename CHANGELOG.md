@@ -11,3 +11,7 @@ Foundation only; Janus does not control sites yet.
 - janus.lua: core (single JANUS table, tagged logging, error budget, xpcall wrappers, one scheduler, event bus,
   settings merge), group-name parser with [tags], setup scan + plain-English report, autostart.
 - Offline harness (tests/fake_dcs.lua) and 42 checks; tools/build.py; probe script for the C-RAM / AI engagement test.
+
+## 0.1.1-phase0 (2026-09-24)
+- Probe run 1 results (docs/PROBE_RESULTS.md): C-RAM does not engage weapons in DCS; design 4.5 amended. Phase 0.5 (clean rerun) added.
+- tools/probe_report.py: shooter type parsing fixed.
