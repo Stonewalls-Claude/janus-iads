@@ -10,6 +10,9 @@ F.groups = {}       -- name -> group
 F.byCoalition = {}  -- coalition -> category -> { groups }
 F.timers = {}       -- { id, fn, arg, at }
 F.nextId = 1
+F.sees = {}            -- group name -> list of units its controller detects
+F.controllerError = {} -- group name -> true: getDetectedTargets raises
+F.emissionLog = {}
 
 -- ---------------------------------------------------------------- env / timer / trigger / land
 env = {
@@ -34,10 +37,15 @@ timer = {
   end,
 }
 
+F.marks = {}
 trigger = { action = {
   outText = function(s, secs) F.text[#F.text + 1] = s end,
   outTextForCoalition = function(c, s, secs) F.text[#F.text + 1] = s end,
-  markToAll = function() end, removeMark = function() end,
+  markToAll = function() end,
+  removeMark = function(id) F.marks[id] = nil end,
+  circleToAll = function(c, id) F.marks[id] = "circle" end,
+  lineToAll = function(c, id) F.marks[id] = "line" end,
+  textToAll = function(c, id, p, col, fill, size, ro, text) F.marks[id] = "text:" .. tostring(text) end,
 } }
 
 land = { getHeight = function(p) return 0 end }
@@ -47,6 +55,10 @@ coalition = { side = { NEUTRAL = 0, RED = 1, BLUE = 2 } }
 Group = { Category = { AIRPLANE = 0, HELICOPTER = 1, GROUND = 2, SHIP = 3, TRAIN = 4 } }
 Unit = { Category = { AIRPLANE = 0, HELICOPTER = 1, GROUND_UNIT = 2, SHIP = 3, STRUCTURE = 4 } }
 Object = { Category = { UNIT = 1, WEAPON = 2, STATIC = 3, BASE = 4, SCENERY = 5, Cargo = 6 } }
+Object.getCategory = function(o) return o:getCategory() end
+AI = { Option = { Ground = { id = { ROE = 0, ALARM_STATE = 9, ENGAGE_AIR_WEAPONS = 20 },
+  val = { ROE = { OPEN_FIRE = 2, RETURN_FIRE = 3, WEAPON_HOLD = 4 }, ALARM_STATE = { AUTO = 0, GREEN = 1, RED = 2 } } },
+  Air = { id = { ROE = 0 }, val = { ROE = { WEAPON_FREE = 0, WEAPON_HOLD = 4 } } } } }
 world = { event = {
   S_EVENT_SHOT = 1, S_EVENT_HIT = 2, S_EVENT_DEAD = 8, S_EVENT_BIRTH = 15,
 } }
@@ -57,7 +69,12 @@ UnitMT.__index = UnitMT
 function UnitMT:isExist() return self.alive end
 function UnitMT:getName() return self.name end
 function UnitMT:getTypeName() return self.type end
-function UnitMT:getPoint() return { x = self.x, y = 0, z = self.z } end
+function UnitMT:getPoint() return { x = self.x, y = self.alt or 0, z = self.z } end
+function UnitMT:getDesc()
+  local cat = self.group.category
+  return { category = (cat == Group.Category.AIRPLANE and 0) or (cat == Group.Category.HELICOPTER and 1)
+    or (cat == Group.Category.SHIP and 3) or 2, typeName = self.type }
+end
 function UnitMT:getPosition() return { p = self:getPoint(), x = { x = 1, y = 0, z = 0 } } end
 function UnitMT:getGroup() return self.group end
 function UnitMT:getCoalition() return self.group.coalition end
@@ -78,7 +95,28 @@ function GroupMT:getSize() return #self:getUnits() end
 function GroupMT:getCoalition() return self.coalition end
 function GroupMT:getCategory() return self.category end
 function GroupMT:getID() return self.id end
-function GroupMT:getController() self.controller = self.controller or { calls = {} }; return self.controller end
+local ControllerMT = {}
+ControllerMT.__index = ControllerMT
+function ControllerMT:setOption(id, val) self.options[id] = val end
+function ControllerMT:getDetectedTargets()
+  if F.controllerError[self.group.name] then error("fake controller failure") end
+  local out = {}
+  if not self.group:isExist() or self.group.emission == false then return out end
+  local seen = F.sees[self.group.name]
+  if seen then
+    for _, u in ipairs(seen) do if u.alive then out[#out + 1] = { object = u, visible = true, type = true, distance = true } end end
+  end
+  return out
+end
+function GroupMT:getController()
+  self.controller = self.controller or setmetatable({ options = {}, group = self }, ControllerMT)
+  return self.controller
+end
+function GroupMT:enableEmission(on)
+  self.emission = on
+  F.emissionLog[#F.emissionLog + 1] = { t = F.time, group = self.name, on = on }
+end
+function UnitMT:getRadar() return self.group.emission ~= false end
 
 Unit.getByName = function(n) for _, g in pairs(F.groups) do for _, u in ipairs(g.units) do if u.name == n then return u end end end end
 Group.getByName = function(n) return F.groups[n] end
@@ -110,7 +148,7 @@ function F.addGroup(spec)
   F.nextId = F.nextId + 1
   for i, us in ipairs(spec.units or {}) do
     local u = setmetatable({ name = us.name or (spec.name .. "-" .. i), type = us.type, x = us.x or 0, z = us.z or 0,
-      alive = true, group = g, id = F.nextId }, UnitMT)
+      alt = us.alt, alive = true, group = g, id = F.nextId }, UnitMT)
     F.nextId = F.nextId + 1
     g.units[#g.units + 1] = u
   end
@@ -122,6 +160,12 @@ function F.kill(unit)
   unit.alive = false
   F.fire({ id = world.event.S_EVENT_DEAD, initiator = unit })
 end
+function F.killGroup(g)
+  for _, u in ipairs(g.units) do if u.alive then F.kill(u) end end
+end
+function F.move(unit, x, z) unit.x, unit.z = x, z end
+function F.emitting(name) local g = F.groups[name]; return g and g.emission ~= false end
+-- spawn during the mission: BIRTH for every unit, like DCS
 
 -- Advance the clock, running due timers in order (a timer returning a number is rescheduled).
 function F.run(untilTime)
@@ -145,9 +189,16 @@ function F.logContains(pattern)
   return false
 end
 
+function F.spawn(spec)
+  local g = F.addGroup(spec)
+  for _, u in ipairs(g.units) do F.fire({ id = world.event.S_EVENT_BIRTH, initiator = u }) end
+  return g
+end
+
 function F.reset()
   F.time = 0; F.log = {}; F.text = {}; F.groups = {}; F.timers = {}; handlers = {}
-  JANUS = nil
+  F.sees = {}; F.controllerError = {}; F.emissionLog = {}; F.marks = {}
+  JANUS = nil; JANUS_SETTINGS = nil
 end
 
 FAKE = F

@@ -91,15 +91,32 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--template', required=True)
     ap.add_argument('--out', default=os.path.join(REPO, 'tests', 'probe', 'janus_probe.miz'))
+    ap.add_argument('--scripts', nargs='+', default=[os.path.join(REPO, 'tests', 'probe', 'janus_probe.lua')],
+                    help='Lua files, loaded in this order by one MISSION START trigger')
+    ap.add_argument('--title', default='JANUS PROBE')
+    ap.add_argument('--desc', default=DESC, help='briefing text')
     a = ap.parse_args()
     zin = zipfile.ZipFile(a.template)
     mission = zin.read('mission').decode('utf-8')
-    mission = replace_block(mission, 'trig', TRIG)
-    mission = replace_block(mission, 'trigrules', TRIGRULES)
-    dictionary = ('dictionary = \n{\n' + ''.join('\t["DictKey_Translation_%d"] = "%s",\n' % (i, DESC) for i in (1, 2, 3))
-                  + '\t["DictKey_Translation_4"] = "JANUS PROBE",\n}\n')
-    map_resource = 'mapResource = \n{\n\t["ResKey_100"] = "janus_probe.lua",\n}\n'
-    script = open(os.path.join(REPO, 'tests', 'probe', 'janus_probe.lua'), 'rb').read()
+    keys = ['ResKey_%d' % (100 + i) for i in range(len(a.scripts))]
+    names = [os.path.basename(p) for p in a.scripts]
+    trig = TRIG.replace('a_do_script_file(getValueResourceByKey(\\"ResKey_100\\"));',
+                        ''.join('a_do_script_file(getValueResourceByKey(\\"%s\\"));' % k for k in keys))
+    acts = ''.join('''				[%d] = 
+				{
+					["file"] = "%s",
+					["predicate"] = "a_do_script_file",
+				},
+''' % (i + 1, k) for i, k in enumerate(keys))
+    head, tail = TRIGRULES.split('\t\t\t["actions"] =\n', 1)
+    tail = tail[tail.index('\t\t\t["colorItem"]'):]
+    rules = head + '\t\t\t["actions"] =\n\t\t\t{\n' + acts + '\t\t\t},\n' + tail
+    rules = rules.replace('Janus probe: DO SCRIPT FILE janus_probe.lua', 'Janus probe: DO SCRIPT FILE ' + ' > '.join(names))
+    mission = replace_block(mission, 'trig', trig)
+    mission = replace_block(mission, 'trigrules', rules)
+    dictionary = ('dictionary = \n{\n' + ''.join('\t["DictKey_Translation_%d"] = "%s",\n' % (i, a.desc.replace('"', "'")) for i in (1, 2, 3))
+                  + '\t["DictKey_Translation_4"] = "%s",\n}\n' % a.title)
+    map_resource = 'mapResource = \n{\n' + ''.join('\t["%s"] = "%s",\n' % (k, n) for k, n in zip(keys, names)) + '}\n'
     with zipfile.ZipFile(a.out, 'w', zipfile.ZIP_DEFLATED) as zout:
         zout.writestr('mission', mission)
         for name in ('options', 'warehouses'):
@@ -107,7 +124,8 @@ def main():
                 zout.writestr(name, zin.read(name))
         zout.writestr('l10n/DEFAULT/dictionary', dictionary)
         zout.writestr('l10n/DEFAULT/mapResource', map_resource)
-        zout.writestr('l10n/DEFAULT/janus_probe.lua', script)
+        for p, n in zip(a.scripts, names):
+            zout.writestr('l10n/DEFAULT/' + n, open(p, 'rb').read())
     print('wrote', a.out, os.path.getsize(a.out), 'bytes; theatre',
           re.search(r'\["theatre"\] = "([^"]+)"', mission).group(1))
 

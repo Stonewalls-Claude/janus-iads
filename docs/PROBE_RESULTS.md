@@ -3,6 +3,63 @@
 Each run has its own mission file, never overwritten (`JANUS_PROBE.miz`, `JANUS_PROBE_V2.miz`, ...); its log and
 Tacview are saved under the same name in `I:\Claude-Workspace\logs`.
 
+## Run 3 (2026-09-25 03:03-03:34 UTC, JANUS_PROBE_V3.miz, probe v0.4 + janus.lua)
+
+Raw log: `I:\Claude-Workspace\logs\janus_probe_run3_20260925.log`; Tacview `Tacview-20260924-230341-DCS-Host-JANUS_PROBE_V3`.
+Server state before the run: stopped since 01:51 UTC (last mission `Alpha_Sortie_1_Syria_rev2.miz`), nobody connected;
+started via WebGUI `startServer`, then V3 loaded.
+
+### A. Switching radars on and off (7 red systems, weapons hold, as seen by `unit:getRadar()`)
+| System | ALARM GREEN -> RED (first) | EMISSION OFF | EMISSION ON | ALARM GREEN | ALARM RED again |
+|---|---|---|---|---|---|
+| SA-10 (S-300PS) | not up within 60 s | (already off) | **on at once** | off at once | **55 s** |
+| SA-11 | not up within 60 s | (already off) | **on at once** | off at once | **49 s** |
+| SA-6 | 11 s | off at once | on at once | off at once | 11 s |
+| SA-15 Tor | 10 s | off at once | on at once | off at once | 11 s |
+| Pantsir-S1 | 5 s | off at once | on at once | off at once | 5 s |
+| SA-2 | never showed a radar | - | - | - | - |
+| SA-5 | never showed a radar | - | - | - | - |
+
+- **`enableEmission(false/true)` is instant** (inside one 1-s sample) for every system that showed a radar, and
+  `enableEmission(true)` brought the SA-10 and SA-11 up at once even though ALARM RED had not finished warming them
+  up. **ALARM GREEN -> RED has a real warm-up**: ~5 s Pantsir, ~10 s SA-6/Tor, ~50-55 s SA-11/SA-10.
+- SA-2 and SA-5 never reported an active radar via `getRadar()` in ALARM RED with no target in range; this needs a
+  target to answer (probe v4).
+- The RWR observer (unarmed F-16C, `getDetectedTargets(Controller.Detection.RWR)`) never reported any emitter, so RWR
+  timings were not measured; the AI RWR query does not appear to work this way. Not needed: `getRadar()` is enough.
+
+### B. Can a launcher-only group fire using another group's radar?
+**No.** Two unarmed C-130s flew through the area for ~15 min. The split SA-10 (radars in one group, launchers in
+another) and split SA-6 never fired. The complete SA-11 control group shot down both C-130s (hits at 563 s and 1077 s).
+DCS launchers only work with a radar **in the same group**.
+
+### C. Do ARMs keep guiding after the target radar goes dark 5 s after launch?
+| Weapon | Target | Flight | Closest approach | Target |
+|---|---|---|---|---|
+| AGM-45A Shrike #1 | SA-10 64N6 search radar (the F-4E picked the SA-10, not the SA-2) | 19.5 s | 5,085 m | alive |
+| AGM-45A Shrike #2 | same | 19.9 s | 4,835 m | alive |
+| AGM-88C HARM #1 | SA-6 1S91 | 218.9 s | 640 m | alive |
+| AGM-88C HARM #2 | SA-2 P-19 | 142.8 s | 3,447 m | alive |
+**In DCS both Shrike and HARM lose the target when its radar goes dark**: all four missed and every target survived.
+In run 2, HARMs whose target kept emitting hit. So in DCS, going dark early enough always defeats an ARM, HARM included.
+
+### D. Patriot vs red ARMs / anti-ship missile
+Su-34 (4x Kh-31P), Su-24M (2x Kh-58U) and Tu-22M3 (3x Kh-22) were given `AttackUnit` on the Patriot radar. **None
+launched**, as in run 2 with SEAD/EngageTargets. The Patriot fired 3 PAC-2s at the Tu-22M3. Red AI ARM launches
+against the Patriot site could not be produced by either tasking; Patriot vs ARM stays unanswered.
+
+### E. Range at which a radar first holds a weapon
+The 55G6 EW radar held the first HARM **2 s after launch at 103.8 km**; the 1L13 held one at **106 km**. Both then
+tracked every HARM continuously. Neither targeted SAM radar ever listed the HARM (they were dark 5 s after launch).
+DCS early-warning radars see ARMs at 100+ km within seconds, far beyond anything plausible. This confirms that the
+4.5A filter is essential.
+
+### F. janus.lua in DCS (first time)
+Loaded after the probe with **no script errors**. The setup report recognised 16 red and 1 blue groups with the right
+roles and flagged all four split groups as "will never fire", naming the missing radar type for each launcher group.
+
+---
+
 ## Run 2 (2026-09-24, JANUS_PROBE_V2.miz, v0.3 layout: no air-to-air weapons, sites ~250 km apart)
 
 Raw log: `I:\Claude-Workspace\logs\janus_probe_run2_20260924.log`.

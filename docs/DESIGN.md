@@ -1,4 +1,4 @@
-# Janus IADS — design (draft 0.6, 2026-09-24)
+# Janus IADS — design (draft 0.7, 2026-09-25)
 
 *Janus: the two-faced Roman god who looks both ways at once.*
 Janus runs integrated air defence networks for **both coalitions in the same mission**. It is one
@@ -78,6 +78,11 @@ Node types:
 defence protects which asset. By default they are **inferred** from distance and system role. They
 can also be set **explicitly** by name tags or through the Lua API.
 
+**DCS limit (probe run 3):** a launcher only fires with a radar **in its own DCS group**; split radar and launcher
+groups never engaged. So a Janus *battery* is always one DCS group, and network links work by controlling each
+group's emissions and ROE (who emits, who may fire), never by lending one group's radar to another group's launchers.
+The setup report already flags launcher-only groups as "will never fire".
+
 ### 4.2 Track picture
 - **Sensor polling** goes through `Controller:getDetectedTargets()` on emitting sensors. It is
   **budgeted and round-robin**: N sensors per tick, with results cached per tick. Each coalition's
@@ -140,6 +145,8 @@ knowing *when* a crew notices matters as much as what it does next.
    after launch from an alerted site, ~31 s cold; kill ~20 s after launch; 3 of 5 HARMs downed, but two got through
    while the site was busy). Patriot tracks weapons but never fires at them. EW radars report a launched weapon
    within a second via `getDetectedTargets`, which is the sensor input for the plausibility gate.
+   **Run 3:** a DCS 55G6 held a HARM 2 s after launch at 104 km and a 1L13 at 106 km, so DCS's own detection must never
+   be used raw (4.5A filter).
 
 
 ### 4.5A ARM awareness model (how a crew finds out)
@@ -163,6 +170,14 @@ measured DCS behaviour instead of guesses. All figures here are gameplay default
 system data, and every one is a doctrine setting.
 
 ### 4.5B Going dark: how long
+**Measured in DCS (probe run 3):** `enableEmission(false/true)` switches a radar off/on **at once**, while
+ALARM GREEN -> RED takes ~5 s (Pantsir), ~10 s (SA-6, Tor) and ~50-55 s (SA-11, SA-10). And in DCS **both Shrike and
+HARM lose their target when the radar goes dark** (4 of 4 missed, targets unharmed). So Janus switches radars with
+`enableEmission`, keeps sites at ALARM RED, and **adds the restart time below itself**: otherwise every site could
+flick back on instantly and dodge every ARM, which would make DCS SEAD pointless. The restart times are Janus rules,
+not DCS behaviour. To keep a real ARM threat, going dark is only allowed once the crew is aware (4.5A), costs the
+engagement in progress, and has a doctrine cap.
+
 Dark time = **predicted time until impact + a margin**, then the system's **restart time**. The prediction uses the
 estimated launch time (when the crew noticed, not the real launch) and the ARM type's speed; its error grows for
 lower-tier crews. A site comes back early if the network learns the missile died (point defence killed it). While a
@@ -171,8 +186,8 @@ suspected ARM shooter stays in range and nose-on, the site stays dark: that is s
 
 | System | What goes dark | Minimum | Typical | Restart to emitting | Other options |
 |---|---|---|---|---|---|
-| **S-300PS (SA-10)** | the engagement radar (30N6 Flap Lid); the battalion can keep searching with the 64N6 if it is not the target | 30 s | 60–120 s (a HARM from long range flies about a minute or more; the probe's Kh-31P took 102 s) | ~10 s from hot standby | hand the engagement to another battery; relocate (pack and set-up are each commonly quoted at ~5 min) |
-| **SA-11 Buk** | only the targeted TELAR: each TELAR has its own radar, so the others and the Snow Drift stay up | 20 s | 45–90 s | ~5–10 s | the other TELARs cover; shoot-and-scoot, ~5 min to move |
+| **S-300PS (SA-10)** | the engagement radar (30N6 Flap Lid); the battalion can keep searching with the 64N6 if it is not the target | 30 s | 60–120 s (a HARM from long range flies a minute or more: probe runs saw 102 s for a Kh-31P and 143–219 s for long-range HARM shots) | ~10 s from hot standby (Janus rule; DCS itself takes ~55 s from ALARM GREEN) | hand the engagement to another battery; relocate (pack and set-up are each commonly quoted at ~5 min) |
+| **SA-11 Buk** | only the targeted TELAR: each TELAR has its own radar, so the others and the Snow Drift stay up | 20 s | 45–90 s | ~5–10 s (Janus rule; DCS takes ~49 s from ALARM GREEN) | the other TELARs cover; shoot-and-scoot, ~5 min to move |
 | **SA-5 (S-200)** | the 5N62 Square Pair illuminator | 60 s | 90–180 s (usually targeted by long-range ARMs, and it cannot move) | ~20–30 s | none: fixed site; depends on EW and decoys |
 | SA-2 / SA-3 (for comparison) | Fan Song / Low Blow | 15 s | Soviet: until impact + margin; NVA: 20–60 s "blinks" | ~10 s | dummy sites, relocation over hours, not minutes |
 
@@ -180,8 +195,9 @@ suspected ARM shooter stays in range and nose-on, the site stays dark: that is s
 all in the per-type data: shorter range (the shooter has to come closer, so behaviour cues fire more easily), a visible
 motor trail (the "eyes" cue works), and, in the real Shrike, no memory of the emitter's position, so a site that goes
 dark in time makes it miss. That is why short NVA "blinks" worked against Shrike and were far riskier against later ARMs
-with memory. Whether DCS's Shrike loses guidance when the radar switches off is measured in probe v3 before Janus
-relies on it.
+with memory. **Probe run 3:** in DCS, Shrike *and* HARM both lose guidance when the radar switches off, so DCS itself
+models no memory. Janus cannot steer a missile, so it cannot add memory back; the restart rules above and the crew
+awareness model are what keep ARMs dangerous.
 
 ### 4.6 Degradation and autonomy
 - Losing a C2 or its comms link means subordinate nodes switch to **autonomous mode** after a
@@ -191,6 +207,42 @@ relies on it.
 - A battery with a lost or damaged radar is degraded or offline. Mobile systems may relocate and
   come back up.
 - Units spawned later are picked up by name (`S_EVENT_BIRTH`) and linked automatically.
+
+### 4.6A How Phase 1 implements the network (built 2026-09-25)
+Source: `src/janus_network.lua`, `janus_tracks.lua`, `janus_emcon.lua`, `janus_doctrine.lua`, `janus_debugview.lua`.
+
+- **Nodes.** One node per named group. Role word → node kind: `CMD` → C2, `COMMS` → relay, `POWER` → power,
+  `EW`/`AWACS` → early warning, `SAM` → battery, `PD` → point defence, `AAA` → guns, `SHIP` → naval. A node is
+  *working* while it still has the equipment its kind needs (a battery needs a radar, a command post a command
+  vehicle); losing that equipment degrades it even if trucks survive.
+- **Networks.** One per coalition, plus one per `[net:Name]` tag. A network with no `CMD` group is a *flat* network:
+  every node shares the picture and nothing goes autonomous from command loss (the zero-code case: just `SAM` and
+  `EW` groups).
+- **Links.** Command posts and relays form a mesh (hops up to `relayRange`, default 80 km). Every other node attaches
+  to the nearest reachable hub within `linkRange` (default 120 km). Tags override: `[cmd:Name]` ties a node to one
+  command post, `[relay:Name]` to one relay. Losing a hub cuts only the nodes that depended on it.
+- **Power.** A `POWER` group powers nodes within `powerRange` (8 km), or those that name it with `[power:Name]`.
+  When all of a node's sources die it runs on reserve for `powerReserve` (300 s), then goes offline (radar off).
+  Nodes with no power group nearby are self-powered.
+- **Autonomy.** A node that loses its link waits `autonomyDelay` for its crew tier, then acts alone with the
+  doctrine's `autonomous` EMCON policy. A battery with no working, linked EW radar covering it also falls back to
+  that policy. Links are rechecked every 5 s and on every unit death.
+- **Crew tier.** `[skill:VET]` or a bare `GRN`/`REG`/`VET`/`ACE` word in the group name; default REG. It sets the
+  autonomy delay and the cue reaction delay.
+- **Track picture (Phase 1 part).** Emitting radars are polled round-robin (6 per second, each at most every 5 s)
+  with `getDetectedTargets`; enemy aircraft and helicopters become tracks, shared across the network by linked
+  sensors and kept locally by every radar. Weapons are ignored until the ARM awareness model (Phase 3).
+- **EMCON.** Every radar group sits at `ALARM_STATE RED`; Janus switches emitters with `enableEmission`. Policies:
+  `always`, `dark`, `cued` (up when a network track is inside engagement range × `cueFactor`, after the tier's
+  `cueDelay`; held for `cueHold` after the last track), `periodic` (on/off timer, staggered per site; stays up
+  while its own radar holds a target in range) and `rotating` (a share of the EW radars up at once, shifting every
+  period). Janus rules: a radar that went dark may not come back before its **restart time** (per range class, per
+  unit type overrides) and a radar that came up stays up at least `minOn`. `[emcon:<policy>]` forces a policy.
+- **Pickup.** Groups spawned after start (Olympus, scripts, late activation) that follow the naming rules are added
+  on `S_EVENT_BIRTH` and linked on the next update.
+- **Check mode.** `CHECK_MODE = true` draws every node on the F10 map: a ring (engagement range, or EW range), a
+  label with kind, tier and state (linked / unlinked / autonomous / offline) and a line to its command hub.
+- **Cost.** Offline harness: 150 nodes and 30 aircraft cost about 0.8 ms of Lua time per simulated second.
 
 ### 4.7 Doctrine profiles (data, not code)
 Shipped profiles, which mission makers can copy and edit:
@@ -327,7 +379,8 @@ SAM Patriot Incirlik  EW FPS-117      CMD CAOC            PD C-RAM Incirlik
 COMMS Relay 1         POWER Plant 2   SHIP CG Leyte Gulf  AWACS Overlord
 ```
 - **Optional tags** in brackets set explicit links or settings: `[net:North]`, `[cmd:Damascus]`,
-  `[protects:SAM SA-10 Hama]`, `[skill:VET]`, `[emcon:dark]`.
+  `[relay:Relay 1]`, `[power:Plant 2]`, `[protects:SAM SA-10 Hama]`, `[skill:VET]` (or just `VET` in the name),
+  `[emcon:dark]` (`always`, `dark`, `cued`, `periodic`, `rotating`).
 - Mission makers who already follow Skynet's `SAM`/`EW` naming need no renaming.
 
 ### 5.2 Lua (optional; for scripters)
@@ -377,8 +430,8 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 | Phase | Delivers | Exit gate |
 |---|---|---|
 | 0 | Unit data generated from the DCS datamine + Olympus databases; battery preset data with sources; project skeleton, build, harness; C-RAM/AI engagement probe mission | **Done 2026-09-24.** Probe run 1 (`docs/PROBE_RESULTS.md`): C-RAM never engages weapons in DCS (aircraft only); Kh-31P flight 102 s, unopposed |
-| 0.5 | Clean probe rerun (JANUS_PROBE_V2.miz): no air-to-air weapons, sites ~250 km apart, weapon-tracking sweep | **Run 2 done 2026-09-24** (`docs/PROBE_RESULTS.md`): Tor/Pantsir shoot HARMs 9-13 s after launch (31 s cold), 3 of 5 killed; EWR tracks a HARM 0.4 s after launch; C-RAM and Patriot track but never fire at weapons. Open: Patriot vs Kh-31P/Kh-22 (red ARM shooters never launched) -> v3 probe with explicit AttackGroup tasks |
-| 1 | Network model, links, C2/comms/power, EW, batteries, autonomy, EMCON | Harness green; red network runs on the bench |
+| 0.5 | Probe runs 2 (JANUS_PROBE_V2.miz) and 3 (JANUS_PROBE_V3.miz): ARM defence, weapon tracking, EMCON timing, cross-group cueing, ARM memory, janus.lua smoke test | **Done 2026-09-25** (`docs/PROBE_RESULTS.md`): Tor/Pantsir shoot HARMs 9-13 s after launch; EW radars hold ARMs at 100+ km within 2 s (filter needed); `enableEmission` is instant, ALARM warm-up 5-55 s; launchers need a radar in their own group; Shrike and HARM both miss once the radar goes dark; janus.lua runs clean in DCS. Open, not blocking: Patriot vs red ARMs (red AI never launched), SA-2/SA-5 radar state without a target |
+| 1 | Network model, links, C2/comms/power, EW, batteries, autonomy, EMCON | Harness green; red network runs on the bench. **Code + harness done 2026-09-25** (60 new checks, lint clean); bench 01 (`JANUS_BENCH_01.miz`) queued |
 | 2 | Track picture, WTA with kill probability, handoffs | Beats Skynet on the bench, excluding HARM effects |
 | 3 | Launch detection and HARM defence ladder, point defence, C-RAM | Beats Skynet on the full bench, repeated runs |
 | 4 | Blue doctrine, naval, AWACS, AAA, Vietnam profiles, battery-preset spawning, both coalitions at once | Blue and Vietnam benches plus dual-side performance targets met |

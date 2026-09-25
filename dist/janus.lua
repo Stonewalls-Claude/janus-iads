@@ -4,6 +4,7 @@
 -- Install: Mission Editor trigger MISSION START -> DO SCRIPT FILE -> janus.lua. That is all.
 
 -- ==================================================================== janus_core.lua
+do
 -- Janus IADS - core: namespace, logging, error budget, safe wrappers, scheduler, events, settings.
 -- Lua 5.1, sanitized DCS Mission Scripting Environment. No dependencies.
 -- Everything Janus owns lives in the one global table JANUS.
@@ -225,8 +226,10 @@ end
 U.coalitionName = { [0] = "neutral", [1] = "red", [2] = "blue" }
 
 M.info("core", "Janus IADS " .. M.VERSION .. " core loaded")
+end -- janus_core.lua
 
 -- ==================================================================== janus_units.lua
+do
 -- GENERATED FILE - do not edit. Built by tools/build_unitdb.py
 -- Sources: DCS Lua datamine (DCS 2.9.29.27278, git fe1d800 2026-08-27) + DCS Olympus unit databases (git bb16683 2026-06-04)
 -- Lua 5.1. One table: JANUS.UnitDB[typeName] -> record. See docs/UNIT_DATA_REPORT.md
@@ -3902,8 +3905,10 @@ JANUS.UnitDB = {
   },
 }
 JANUS.UnitDBMeta = { dcsVersion = "2.9.29.27278", datamine = "fe1d800 2026-08-27", olympus = "bb16683 2026-06-04", count = 179 }
+end -- janus_units.lua
 
 -- ==================================================================== janus_presets.lua
+do
 -- Janus IADS - battery presets: how real batteries are built, mapped to DCS unit types.
 -- Lua 5.1. Hand-written data; validated by tools/check_presets.py against src/janus_units.lua
 -- (every `type` below must exist in DCS and carry the role the preset says it does).
@@ -4379,8 +4384,10 @@ JANUS.Presets = {
     sources = { "https://en.wikipedia.org/wiki/Slava-class_cruiser" },
   },
 }
+end -- janus_presets.lua
 
 -- ==================================================================== janus_names.lua
+do
 -- Janus IADS - group-name parsing: role words and [tags].
 -- "SAM SA-10 Hama [net:North] [skill:VET]"  ->  { role = "SAM", label = "SA-10 Hama", tags = { net = "North", skill = "VET" } }
 
@@ -4446,8 +4453,893 @@ function N.list(s)
   end
   return out
 end
+end -- janus_names.lua
+
+-- ==================================================================== janus_doctrine.lua
+do
+-- Janus IADS - doctrine profiles (data, not code). Phase 1 fields: network links, power, autonomy, EMCON.
+-- Later phases add the ARM response ladder, WTA and ROE fields to the same tables.
+-- Mission makers can copy a profile, change values and pass it as RED_DOCTRINE / BLUE_DOCTRINE (a table) in
+-- janus_settings.lua, or name one of these profiles.
+--
+-- Field reference (all distances in metres, all times in seconds):
+--   linkRange        a node (EW, battery...) connects to a command post or relay within this distance
+--   relayRange       command posts and relays connect to each other within this distance
+--   powerRange       a POWER node powers nodes within this distance (or name it with [power:Name])
+--   powerReserve     how long a node keeps running after its last power source dies
+--   autonomyDelay    per crew tier: how long after losing its link to command a node waits before acting alone
+--   cueDelay         per crew tier: reaction time between a network cue and the radar coming up
+--   cueFactor        a battery is cued when a network track is inside engagement range x cueFactor
+--   cueHold          a cued radar stays up this long after the last track leaves
+--   emcon            policy per node kind while linked to command:
+--                      "always" (emit all the time), "dark" (never emit), "cued" (emit when the network cues it),
+--                      "periodic" (emit on/off on a timer), "rotating" (EW radars take turns)
+--   autonomous       policy a node falls back to when it has lost command or has no EW cover
+--   periodic         { on = s, off = s } for the "periodic" policy
+--   rotating         { share = fraction of EW radars up at once, period = s }
+--   restart          per range class, the Janus restart time after a radar goes dark (DESIGN 4.5B; DCS itself
+--                    switches instantly, so without this rule a site could dodge every ARM)
+--   restartByType    per DCS unit type overrides of restart
+--   minOn            once up, a radar stays up at least this long (stops flicker)
+
+JANUS = JANUS or {}
+local M = JANUS
+
+local TIER = function(grn, reg, vet, ace) return { GRN = grn, REG = reg, VET = vet, ACE = ace } end
+
+local BASE = {
+  linkRange = 120000, relayRange = 80000, powerRange = 8000, powerReserve = 300,
+  autonomyDelay = TIER(180, 120, 60, 30),
+  cueDelay = TIER(12, 6, 3, 2),
+  cueFactor = 1.3, cueHold = 30, minOn = 15,
+  emcon = { EW = "always", BATTERY = "cued", PD = "cued", AAA = "always", NAVAL = "always", C2 = "always" },
+  autonomous = { EW = "always", BATTERY = "periodic", PD = "periodic", AAA = "always", NAVAL = "always", C2 = "always" },
+  periodic = { on = 20, off = 40 },
+  rotating = { share = 0.5, period = 120 },
+  restart = { LR = 10, MR = 8, SR = 5, NONE = 5 },
+  restartByType = { ["RPC_5N62V"] = 25, ["SNR_75V"] = 10, ["snr s-125 tr"] = 10 },
+}
+
+local function derive(base, changes)
+  local out = {}
+  for k, v in pairs(base) do
+    if type(v) == "table" then
+      local t = {}
+      for k2, v2 in pairs(v) do t[k2] = v2 end
+      out[k] = t
+    else
+      out[k] = v
+    end
+  end
+  for k, v in pairs(changes) do
+    if type(v) == "table" and type(out[k]) == "table" then
+      for k2, v2 in pairs(v) do out[k][k2] = v2 end
+    else
+      out[k] = v
+    end
+  end
+  return out
+end
+M.deriveDoctrine = derive
+
+M.Doctrines = {
+  -- Centralised control, strict EMCON: EW always up, SAMs dark until the command post cues them, slow to act alone.
+  SOVIET_PVO_1985 = derive(BASE, {
+    name = "SOVIET_PVO_1985",
+    autonomyDelay = TIER(300, 180, 120, 60),
+    autonomous = { BATTERY = "periodic", PD = "periodic" },
+    periodic = { on = 15, off = 60 },
+  }),
+  -- Faster autonomy, EW radars rotate to spread their exposure, point defence stays close to always-on.
+  RUSSIA_MODERN = derive(BASE, {
+    name = "RUSSIA_MODERN",
+    autonomyDelay = TIER(120, 60, 30, 20),
+    cueDelay = TIER(8, 4, 2, 1),
+    emcon = { EW = "rotating", PD = "cued" },
+    rotating = { share = 0.5, period = 90 },
+    periodic = { on = 20, off = 30 },
+  }),
+  -- Delegated authority: batteries act on their own sooner; AWACS-led picture.
+  NATO_COLDWAR = derive(BASE, {
+    name = "NATO_COLDWAR",
+    autonomyDelay = TIER(90, 60, 30, 20),
+    autonomous = { BATTERY = "periodic", PD = "always" },
+  }),
+  -- Data-linked picture, fast reactions, point defence always up around protected assets.
+  US_MODERN = derive(BASE, {
+    name = "US_MODERN",
+    autonomyDelay = TIER(60, 30, 20, 10),
+    cueDelay = TIER(6, 3, 2, 1),
+    emcon = { PD = "always" },
+    autonomous = { BATTERY = "periodic", PD = "always" },
+    periodic = { on = 30, off = 30 },
+  }),
+  -- North Vietnam 1965-72: Fan Song emits for seconds only, sites cued by early warning, AAA always ready.
+  NVA_VIETNAM_1965_72 = derive(BASE, {
+    name = "NVA_VIETNAM_1965_72",
+    cueFactor = 1.0, cueHold = 15, minOn = 8,
+    autonomyDelay = TIER(240, 150, 90, 60),
+    periodic = { on = 10, off = 60 },
+  }),
+  -- US Vietnam era: Hawk batteries defending airbases, simple procedural control.
+  US_VIETNAM_1965_72 = derive(BASE, {
+    name = "US_VIETNAM_1965_72",
+    emcon = { BATTERY = "always" },
+    autonomous = { BATTERY = "always" },
+  }),
+  -- Poor coordination: radars left on, slow reactions.
+  GENERIC_THIRD_WORLD = derive(BASE, {
+    name = "GENERIC_THIRD_WORLD",
+    cueDelay = TIER(20, 12, 8, 5),
+    autonomyDelay = TIER(400, 300, 200, 120),
+    emcon = { BATTERY = "always", PD = "always" },
+    autonomous = { BATTERY = "always", PD = "always" },
+  }),
+}
+
+-- Resolve a doctrine setting (profile name or table) to a full profile. Unknown names fall back with a warning.
+function M.getDoctrine(nameOrTable, fallback)
+  if type(nameOrTable) == "table" then
+    local base = M.Doctrines[nameOrTable.base or fallback or "SOVIET_PVO_1985"] or M.Doctrines.SOVIET_PVO_1985
+    local d = derive(base, nameOrTable)
+    d.name = nameOrTable.name or ("custom:" .. tostring(base.name))
+    return d
+  end
+  local d = M.Doctrines[nameOrTable or ""]
+  if d then return d end
+  if M.warn then M.warn("doctrine", "unknown doctrine '" .. tostring(nameOrTable) .. "', using " .. tostring(fallback)) end
+  return M.Doctrines[fallback or "SOVIET_PVO_1985"] or M.Doctrines.SOVIET_PVO_1985
+end
+end -- janus_doctrine.lua
+
+-- ==================================================================== janus_network.lua
+do
+-- Janus IADS - network model (DESIGN 4.1, 4.6): nodes, networks, command links through relays, power, autonomy.
+-- A node is one DCS group (probe run 3: a launcher only fires with a radar in its own group).
+
+JANUS = JANUS or {}
+local M = JANUS
+local U = M.util
+local S = M.settings
+
+local string_format = string.format
+local pairs, ipairs = pairs, ipairs
+
+local N = {}
+M.net = N
+N.nodes = {}          -- name -> node
+N.list = {}           -- array of nodes
+N.networks = {}       -- key "red/main" -> network
+N.dirty = true
+N.callbacks = { nodeLost = {}, autonomy = {}, linked = {} }
+
+local ROLE_TO_KIND = { CMD = "C2", COMMS = "COMMS", POWER = "POWER", EW = "EW", AWACS = "EW",
+                       SAM = "BATTERY", PD = "PD", AAA = "AAA", SHIP = "NAVAL" }
+
+-- unit roles that keep a node of each kind "working"
+local WORKING = {
+  C2 = { C2 = true, C2_GENERIC = true, EWR = true },
+  COMMS = "any", POWER = "any",
+  EW = { EWR = true, SR = true, STR = true, TR = true, AIRBORNE_SENSOR = true, TELAR = true, SHORAD = true },
+  BATTERY = { TR = true, STR = true, TELAR = true, SHORAD = true, AAA_FC = true, NAVAL_AD = true },
+  PD = { TR = true, STR = true, TELAR = true, SHORAD = true, CRAM = true, AAA = true },
+  AAA = { AAA = true, AAA_FC = true, SHORAD = true, MANPADS = true },
+  NAVAL = { NAVAL_AD = true, NAVAL = true },
+}
+local RADAR_ROLES = { EWR = true, SR = true, STR = true, TR = true, TELAR = true, SHORAD = true, CRAM = true,
+                      AAA_FC = true, NAVAL_AD = true, AIRBORNE_SENSOR = true }
+local SHOOTER_ROLES = { LN = true, TELAR = true, SHORAD = true, CRAM = true, AAA = true, MANPADS = true, NAVAL_AD = true }
+
+local TIERS = { GRN = true, REG = true, VET = true, ACE = true }
+
+function N.on(kind, fn)
+  local list = N.callbacks[kind]
+  if list then list[#list + 1] = fn end
+end
+local function fire(kind, ...)
+  local list = N.callbacks[kind]
+  for i = 1, #list do M.safe("net.callback." .. kind, list[i], ...) end
+end
+
+-- ------------------------------------------------------------------ node construction
+local function tierOf(site)
+  local t = site.tags.skill or site.tags.tier
+  if t and TIERS[string.upper(t)] then return string.upper(t) end
+  for word in string.gmatch(site.name, "%a+") do
+    local w = string.upper(word)
+    if TIERS[w] then return w end
+  end
+  return "REG"
+end
+
+local function networkFor(coalition, name)
+  local coa = U.coalitionName[coalition] or tostring(coalition)
+  local key = coa .. "/" .. name
+  local net = N.networks[key]
+  if not net then
+    local doctrineSetting = (coalition == 1) and S.RED_DOCTRINE or S.BLUE_DOCTRINE
+    local fallback = (coalition == 1) and "SOVIET_PVO_1985" or "US_MODERN"
+    net = { key = key, name = name, coalition = coalition, coaName = coa,
+            doctrine = M.getDoctrine(doctrineSetting, fallback), nodes = {}, hasC2 = false }
+    N.networks[key] = net
+  end
+  return net
+end
+
+local function ranges(site)
+  local det, eng, rclass = 0, 0, "NONE"
+  local order = { NONE = 0, SR = 1, MR = 2, LR = 3 }
+  for _, u in ipairs(site.units) do
+    local r = u.rec
+    if (r.detectionRange or 0) > det then det = r.detectionRange end
+    if SHOOTER_ROLES[r.role] and (r.threatRange or 0) > eng then eng = r.threatRange end
+    local rc = r.rangeClass or "NONE"
+    if order[rc] and order[rc] > order[rclass] then rclass = rc end
+  end
+  return det, eng, rclass
+end
+
+function N.addSite(site)
+  if N.nodes[site.name] then return N.nodes[site.name] end
+  local kind = ROLE_TO_KIND[site.roleWord] or "BATTERY"
+  local net = networkFor(site.coalition, site.tags.net or "main")
+  local det, eng, rclass = ranges(site)
+  local hasRadar = false
+  for _, u in ipairs(site.units) do if RADAR_ROLES[u.rec.role] then hasRadar = true end end
+  local node = {
+    name = site.name, site = site, kind = kind, net = net, tier = tierOf(site),
+    detectionRange = det, engageRange = eng, rangeClass = rclass, hasRadar = hasRadar,
+    airborne = site.roleWord == "AWACS",
+    alive = true, working = true, powered = true, linked = true, autonomous = false,
+    powerSources = nil, reserveUntil = nil, unlinkedSince = nil, parent = nil,
+    emcon = { policy = nil, on = nil, offSince = -1e9, onSince = -1e9, cuedAt = nil, lastCue = -1e9, emitSec = 0 },
+  }
+  N.nodes[site.name] = node
+  N.list[#N.list + 1] = node
+  net.nodes[#net.nodes + 1] = node
+  if kind == "C2" then net.hasC2 = true end
+  N.dirty = true
+  return node
+end
+
+-- ------------------------------------------------------------------ state from DCS
+local function nodePos(node)
+  local g = node.site.group
+  if not (g and g.isExist and g:isExist()) then return node.pos end
+  local units = g:getUnits() or {}
+  for i = 1, #units do
+    if U.alive(units[i]) then
+      local p = units[i]:getPoint()
+      if p then return p end
+    end
+  end
+  return node.pos
+end
+
+local function refreshAlive(node)
+  local g = node.site.group
+  local alive, working = false, false
+  local need = WORKING[node.kind]
+  if g and g.isExist and g:isExist() then
+    for _, u in ipairs(node.site.units) do
+      if U.alive(u.unit) and u.unit:getLife() > 0 then
+        alive = true
+        if need == "any" or (need and need[u.rec.role]) then working = true end
+      end
+    end
+  end
+  if node.alive and not alive then
+    M.info("net", string_format("%s %s destroyed", node.net.key, node.name))
+    fire("nodeLost", node)
+  elseif node.working and alive and not working then
+    M.info("net", string_format("%s %s lost its %s equipment (degraded)", node.net.key, node.name, node.kind))
+  end
+  node.alive, node.working = alive, alive and working
+  node.pos = nodePos(node) or node.pos
+end
+
+-- ------------------------------------------------------------------ topology
+local function dist2(a, b)
+  local dx, dz = a.x - b.x, a.z - b.z
+  return dx * dx + dz * dz
+end
+
+local function findByLabel(net, kind, label)
+  if not label then return nil end
+  local l = string.lower(U.trim(label))
+  for _, n in ipairs(net.nodes) do
+    if n.kind == kind and (string.lower(n.name) == l or string.lower(n.site.label) == l) then return n end
+  end
+  return nil
+end
+
+local function assignPower(net)
+  local d = net.doctrine
+  local r2 = d.powerRange * d.powerRange
+  for _, n in ipairs(net.nodes) do
+    if n.kind ~= "POWER" and n.pos then
+      local src
+      if n.site.tags.power then
+        src = {}
+        for _, lbl in ipairs(M.names.list(n.site.tags.power)) do
+          local p = findByLabel(net, "POWER", lbl)
+          if p then src[#src + 1] = p end
+        end
+      else
+        for _, p in ipairs(net.nodes) do
+          if p.kind == "POWER" and p.pos and dist2(p.pos, n.pos) <= r2 then
+            src = src or {}
+            src[#src + 1] = p
+          end
+        end
+      end
+      n.powerSources = src
+    end
+  end
+end
+
+-- Command reachability: BFS from working, powered C2 nodes through working, powered relays.
+local function computeLinks(net, now)
+  local d = net.doctrine
+  local relay2, link2 = d.relayRange * d.relayRange, d.linkRange * d.linkRange
+  local hubs = {}
+  for _, n in ipairs(net.nodes) do
+    if (n.kind == "C2" or n.kind == "COMMS") and n.working and n.powered and n.pos then hubs[#hubs + 1] = n end
+  end
+  local reached, queue = {}, {}
+  for _, h in ipairs(hubs) do
+    if h.kind == "C2" then reached[h] = h; queue[#queue + 1] = h end
+  end
+  local qi = 1
+  while qi <= #queue do
+    local a = queue[qi]; qi = qi + 1
+    for _, b in ipairs(hubs) do
+      if not reached[b] and dist2(a.pos, b.pos) <= relay2 then
+        reached[b] = a
+        queue[#queue + 1] = b
+      end
+    end
+  end
+  for _, n in ipairs(net.nodes) do
+    local linked, parent = false, nil
+    if not net.hasC2 then
+      linked = true                                  -- flat network: no command posts, everyone shares
+    elseif reached[n] then
+      linked, parent = true, reached[n]
+    elseif n.kind ~= "C2" and n.kind ~= "POWER" and n.pos then
+      local want = findByLabel(net, "C2", n.site.tags.cmd)
+      local viaRelay = findByLabel(net, "COMMS", n.site.tags.relay)
+      if want then
+        linked, parent = reached[want] ~= nil, want
+      elseif viaRelay then
+        linked, parent = reached[viaRelay] ~= nil and dist2(viaRelay.pos, n.pos) <= link2, viaRelay
+      else
+        local best, bestD = nil, link2
+        for h in pairs(reached) do
+          local dd = dist2(h.pos, n.pos)
+          if dd <= bestD then best, bestD = h, dd end
+        end
+        linked, parent = best ~= nil, best
+      end
+    end
+    n.parent = parent
+    if linked then
+      if n.autonomous then
+        n.autonomous = false
+        M.info("net", string_format("%s %s link to command restored", net.key, n.name))
+        fire("linked", n)
+      end
+      n.linked, n.unlinkedSince = true, nil
+    else
+      if n.linked then
+        n.linked, n.unlinkedSince = false, now
+        M.info("net", string_format("%s %s lost its link to command", net.key, n.name))
+      end
+    end
+  end
+end
+
+local function updatePower(net, now)
+  for _, n in ipairs(net.nodes) do
+    local src = n.powerSources
+    if src and #src > 0 then
+      local any = false
+      for _, p in ipairs(src) do if p.working then any = true end end
+      if any then
+        n.reserveUntil = nil
+        if not n.powered then M.info("net", string_format("%s %s power restored", net.key, n.name)) end
+        n.powered = true
+      elseif n.powered then
+        if not n.reserveUntil then
+          n.reserveUntil = now + net.doctrine.powerReserve
+          M.info("net", string_format("%s %s on reserve power for %d s", net.key, n.name, net.doctrine.powerReserve))
+        elseif now >= n.reserveUntil then
+          n.powered = false
+          M.info("net", string_format("%s %s out of power", net.key, n.name))
+        end
+      end
+    else
+      n.powered = true
+    end
+  end
+end
+
+local function updateAutonomy(net, now)
+  local delays = net.doctrine.autonomyDelay
+  for _, n in ipairs(net.nodes) do
+    if not n.linked and not n.autonomous and n.unlinkedSince then
+      if now - n.unlinkedSince >= (delays[n.tier] or delays.REG) then
+        n.autonomous = true
+        M.info("net", string_format("%s %s is now autonomous (%s crew)", net.key, n.name, n.tier))
+        fire("autonomy", n)
+      end
+    end
+  end
+end
+
+-- Full update: cheap enough for every slow tick; topology only when something changed.
+function N.update()
+  local now = M.now()
+  for _, n in ipairs(N.list) do
+    if n.alive or N.dirty then refreshAlive(n) end
+  end
+  for _, net in pairs(N.networks) do
+    if N.dirty then assignPower(net) end
+    updatePower(net, now)
+    computeLinks(net, now)
+    updateAutonomy(net, now)
+  end
+  if N.dirty and N.onTopology then M.safe("net.topology", N.onTopology) end
+  N.dirty = false
+end
+
+-- ------------------------------------------------------------------ building, events
+function N.build()
+  for _, site in ipairs(M.sites) do N.addSite(site) end
+  for _, n in ipairs(N.list) do n.pos = nodePos(n) end
+  N.dirty = true
+  N.update()
+  local parts = {}
+  for _, net in pairs(N.networks) do
+    local counts = {}
+    for _, n in ipairs(net.nodes) do counts[n.kind] = (counts[n.kind] or 0) + 1 end
+    local c = {}
+    for _, k in ipairs(U.keys(counts)) do c[#c + 1] = counts[k] .. "x " .. k end
+    parts[#parts + 1] = string_format("%s (%s, %s%s)", net.key, U.join(c), net.doctrine.name,
+      net.hasC2 and "" or ", no command post: flat network")
+  end
+  table.sort(parts)
+  for _, p in ipairs(parts) do M.info("net", "network " .. p) end
+  for _, n in ipairs(N.list) do
+    local p = n.parent and (" -> " .. n.parent.name) or ""
+    local pw = (n.powerSources and #n.powerSources > 0) and (" power:" .. n.powerSources[1].name) or ""
+    M.info("net", string_format("  %s [%s %s]%s%s%s", n.name, n.kind, n.tier, p, pw, n.linked and "" or " (NOT LINKED)"))
+  end
+end
+
+-- A group spawned after start (Olympus, scripts, late activation) that follows the naming rules.
+function N.pickUp(group)
+  if not (group and group.isExist and group:isExist()) then return end
+  local name = group:getName()
+  if N.nodes[name] then return end
+  local parsed = M.names.parse(name)
+  if not parsed then return end
+  local site = M.inspectGroup(group, parsed, group:getCoalition())
+  M.sites[#M.sites + 1] = site
+  local node = N.addSite(site)
+  node.pos = nodePos(node)
+  M.info("net", string_format("picked up %s [%s] in %s", name, node.kind, node.net.key))
+  if N.onNewNode then M.safe("net.newnode", N.onNewNode, node) end
+end
+
+function N.start()
+  N.build()
+  M.on(world.event.S_EVENT_DEAD, "net.dead", function() N.dirty = true end)
+  M.on(world.event.S_EVENT_BIRTH, "net.birth", function(e)
+    local u = e.initiator
+    if u and u.getGroup and Object.getCategory(u) == Object.Category.UNIT then
+      local ok, g = pcall(u.getGroup, u)
+      if ok and g then
+        -- groups are complete a moment after the first BIRTH; pick them up on the next tick
+        timer.scheduleFunction(M.wrap("net.pickup", function() N.pickUp(g) end), nil, M.now() + 1)
+      end
+    end
+  end)
+  M.every("net.update", 5, N.update, 2)
+end
+end -- janus_network.lua
+
+-- ==================================================================== janus_tracks.lua
+do
+-- Janus IADS - track picture, Phase 1 (DESIGN 4.2, first part): aircraft seen by the network's emitting radars.
+-- Budgeted round-robin polling of Controller:getDetectedTargets(); weapons are ignored here (the ARM awareness
+-- model of DESIGN 4.5A handles them in Phase 3, because DCS's own weapon detection is far too generous).
+
+JANUS = JANUS or {}
+local M = JANUS
+
+local T = {}
+M.tracks = T
+
+local pairs, ipairs = pairs, ipairs
+
+T.POLL_INTERVAL = 5     -- a sensor is polled at most this often
+T.BUDGET = 6            -- sensors polled per 1-s tick (spread the cost)
+T.TTL = 20              -- a track not refreshed for this long is dropped
+T.cursor = 1
+T.stats = { polls = 0 }
+
+local AIR = { [0] = true, [1] = true }   -- Unit.Category AIRPLANE, HELICOPTER
+
+local function isSensor(n)
+  return n.alive and n.working and n.powered and n.hasRadar and n.emcon.on ~= false
+end
+T.isSensor = isSensor
+
+local function store(picture, obj, pos, now, node)
+  local id = obj.getID and obj:getID() or tostring(obj)
+  local tr = picture[id]
+  if not tr then
+    tr = { id = id, obj = obj, first = now, sensors = {} }
+    picture[id] = tr
+  end
+  tr.pos, tr.t = pos, now
+  tr.sensors[node.name] = now
+  return tr
+end
+
+function T.poll(node, now)
+  node.lastPoll = now
+  local g = node.site.group
+  if not (g and g:isExist()) then return 0 end
+  local c = g:getController()
+  if not c then return 0 end
+  local dets = c:getDetectedTargets() or {}
+  local coa = node.net.coalition
+  local n = 0
+  node.localTracks = node.localTracks or {}
+  for i = 1, #dets do
+    local obj = dets[i].object
+    if obj and obj.isExist and obj:isExist() and Object.getCategory(obj) == Object.Category.UNIT then
+      local ocoa = obj:getCoalition()
+      local desc = obj:getDesc()
+      if ocoa ~= coa and ocoa ~= 0 and desc and AIR[desc.category] then
+        local pos = obj:getPoint()
+        store(node.localTracks, obj, pos, now, node)
+        if node.linked then
+          node.net.tracks = node.net.tracks or {}
+          store(node.net.tracks, obj, pos, now, node)
+        end
+        n = n + 1
+      end
+    end
+  end
+  T.stats.polls = T.stats.polls + 1
+  return n
+end
+
+local function expire(picture, now)
+  for id, tr in pairs(picture) do
+    if now - tr.t > T.TTL or not (tr.obj and tr.obj:isExist()) then picture[id] = nil end
+  end
+end
+
+function T.tick()
+  local now = M.now()
+  local list = M.net.list
+  local count = #list
+  if count == 0 then return end
+  local polled, looked = 0, 0
+  while polled < T.BUDGET and looked < count do
+    if T.cursor > count then T.cursor = 1 end
+    local n = list[T.cursor]
+    T.cursor = T.cursor + 1
+    looked = looked + 1
+    if isSensor(n) and now - (n.lastPoll or -1e9) >= T.POLL_INTERVAL then
+      M.safe("tracks.poll", T.poll, n, now)
+      polled = polled + 1
+    end
+  end
+  for _, net in pairs(M.net.networks) do
+    if net.tracks then expire(net.tracks, now) end
+  end
+  for _, n in ipairs(list) do
+    if n.localTracks then expire(n.localTracks, now) end
+  end
+end
+
+-- Closest track inside `range` of the node: the network picture if the node is linked, plus its own radar.
+function T.nearest(node, range)
+  if not node.pos then return nil end
+  local r2 = range * range
+  local best, bestD
+  local function scan(picture)
+    if not picture then return end
+    for _, tr in pairs(picture) do
+      local dx, dz = tr.pos.x - node.pos.x, tr.pos.z - node.pos.z
+      local d2 = dx * dx + dz * dz
+      if d2 <= r2 and (not bestD or d2 < bestD) then best, bestD = tr, d2 end
+    end
+  end
+  if node.linked then scan(node.net.tracks) end
+  scan(node.localTracks)
+  return best, bestD and math.sqrt(bestD)
+end
+
+function T.start()
+  M.every("tracks.tick", 1, T.tick, 1)
+end
+end -- janus_tracks.lua
+
+-- ==================================================================== janus_emcon.lua
+do
+-- Janus IADS - emission control (DESIGN 4.4, 4.5B). Every radar group sits at ALARM_STATE RED and Janus switches
+-- its emitters with Group:enableEmission(), which DCS applies instantly (probe run 3). Janus adds its own restart
+-- time after a radar goes dark and a minimum on-time, so sites cannot flicker or dodge ARMs for free.
+
+JANUS = JANUS or {}
+local M = JANUS
+
+local E = {}
+M.emcon = E
+E.onChange = {}
+
+local string_format = string.format
+local pairs, ipairs = pairs, ipairs
+
+local POLICIES = { always = true, dark = true, cued = true, periodic = true, rotating = true }
+local MANAGED = { EW = true, BATTERY = true, PD = true, AAA = true, NAVAL = true, C2 = true }
+
+local function restartTime(n)
+  local d = n.net.doctrine
+  local by = d.restartByType
+  for _, u in ipairs(n.site.units) do
+    if by[u.rec.type] then return by[u.rec.type] end
+  end
+  return d.restart[n.rangeClass] or d.restart.NONE or 5
+end
+
+-- Which policy applies to this node right now.
+function E.policyFor(n)
+  if not (n.alive and n.working and n.powered) then return "offline" end
+  local tag = n.site.tags.emcon
+  if tag and POLICIES[string.lower(tag)] then return string.lower(tag) end
+  local d = n.net.doctrine
+  if n.autonomous or ((n.kind == "BATTERY" or n.kind == "PD") and not n.covered) then
+    return d.autonomous[n.kind] or "periodic"
+  end
+  return d.emcon[n.kind] or "always"
+end
+
+-- A battery is covered when a linked, working EW radar (not held dark) can see its area.
+local function updateCoverage(net)
+  local ews = {}
+  for _, n in ipairs(net.nodes) do
+    if n.kind == "EW" and n.alive and n.working and n.powered and n.linked and n.pos
+       and string.lower(n.site.tags.emcon or "") ~= "dark" then
+      ews[#ews + 1] = n
+    end
+  end
+  for _, n in ipairs(net.nodes) do
+    if n.kind == "BATTERY" or n.kind == "PD" then
+      local cov = false
+      if n.pos and n.linked then
+        for _, ew in ipairs(ews) do
+          local dx, dz = ew.pos.x - n.pos.x, ew.pos.z - n.pos.z
+          local r = ew.detectionRange > 0 and ew.detectionRange or 100000
+          if dx * dx + dz * dz <= r * r then cov = true; break end
+        end
+      end
+      if n.covered ~= nil and n.covered ~= cov then
+        M.info("emcon", string_format("%s %s %s EW cover", net.key, n.name, cov and "back under" or "lost"))
+      end
+      n.covered = cov
+    end
+  end
+  return ews
+end
+
+-- Rotating EW: `share` of the available rotating radars are up at once, the set shifting every `period`.
+local function rotatingOn(n, now)
+  local rot = n.net.doctrine.rotating
+  local members = {}
+  for _, m in ipairs(n.net.nodes) do
+    if m.kind == n.kind and m.alive and m.working and m.powered and E.policyFor(m) == "rotating" then
+      members[#members + 1] = m
+    end
+  end
+  local k = #members
+  if k <= 1 then return true end
+  local up = math.max(1, math.floor(k * rot.share + 0.5))
+  local slot = math.floor(now / rot.period)
+  for i, m in ipairs(members) do
+    if m == n then return ((i - 1 + slot) % k) < up end
+  end
+  return true
+end
+
+-- What the policy wants; returns wantOn, reason.
+function E.want(n, policy, now)
+  local em = n.emcon
+  local d = n.net.doctrine
+  if policy == "offline" or policy == "dark" then return false, policy end
+  if policy == "always" then return true, "always" end
+  if policy == "rotating" then return rotatingOn(n, now), "rotating" end
+  local reach = (n.engageRange > 0 and n.engageRange or n.detectionRange) * d.cueFactor
+  if policy == "cued" then
+    local tr, dist = M.tracks.nearest(n, reach)
+    if tr then
+      em.cuedAt = em.cuedAt or now
+      em.lastCue = now
+      local delay = d.cueDelay[n.tier] or d.cueDelay.REG
+      if now - em.cuedAt >= delay then return true, string_format("cued, track %.0f km", dist / 1000) end
+      return em.on == true, "cue pending"
+    end
+    em.cuedAt = nil
+    if em.on and now - em.lastCue <= d.cueHold then return true, "cue hold" end
+    return false, "no cue"
+  end
+  if policy == "periodic" then
+    -- engaging something it can see itself keeps it up
+    if em.on and n.localTracks then
+      local own = M.tracks.nearest({ pos = n.pos, linked = false, localTracks = n.localTracks, net = n.net },
+        n.engageRange > 0 and n.engageRange or n.detectionRange)
+      if own then return true, "own track" end
+    end
+    local p = d.periodic
+    local cycle = p.on + p.off
+    if not em.phase then                                   -- stable per-site stagger from the name
+      local h = 0
+      for i = 1, #n.name do h = (h * 31 + string.byte(n.name, i)) % 100003 end
+      em.phase = h % cycle
+    end
+    return ((now + em.phase) % cycle) < p.on, "periodic"
+  end
+  return true, "unknown policy"
+end
+
+local function apply(n, on, reason, now)
+  local g = n.site.group
+  if g and g:isExist() and g.enableEmission then
+    M.safe("emcon.enable", g.enableEmission, g, on)
+  end
+  local em = n.emcon
+  local first = em.on == nil
+  em.on = on
+  if on then em.onSince = now
+  elseif not first then em.offSince = now end        -- starting dark is not "going dark": no restart penalty
+  if not first or on then
+    M.info("emcon", string_format("%s %s %s (%s)", n.net.key, n.name, on and "ON" or "OFF", reason))
+  end
+  for i = 1, #E.onChange do M.safe("emcon.callback", E.onChange[i], n, on, reason) end
+end
+
+function E.tick()
+  local now = M.now()
+  for _, net in pairs(M.net.networks) do updateCoverage(net) end
+  for _, n in ipairs(M.net.list) do
+    if MANAGED[n.kind] and n.hasRadar then
+      local em = n.emcon
+      local policy = E.policyFor(n)
+      if policy ~= em.policy then
+        if em.policy then M.info("emcon", string_format("%s %s policy %s -> %s", n.net.key, n.name, em.policy, policy)) end
+        em.policy = policy
+      end
+      local want, reason = E.want(n, policy, now)
+      if em.on == nil then
+        apply(n, want, reason, now)                               -- first decision: no timing rules
+      elseif want and not em.on then
+        local ready = em.offSince + restartTime(n)
+        if now >= ready then apply(n, true, reason, now) end
+      elseif not want and em.on then
+        local forced = policy == "offline" or policy == "dark"
+        if forced or now >= em.onSince + n.net.doctrine.minOn then apply(n, false, reason, now) end
+      end
+      if em.on then em.emitSec = em.emitSec + 1 end
+    end
+  end
+end
+
+-- Force a policy on a node at runtime (API). policy nil clears the override.
+function E.set(name, policy)
+  local n = M.net.nodes[name]
+  if not n then return false end
+  n.site.tags.emcon = policy
+  return true
+end
+
+function E.start()
+  local O = AI.Option.Ground
+  for _, n in ipairs(M.net.list) do
+    local g = n.site.group
+    if g and g:isExist() and (n.hasRadar or n.kind == "AAA") then
+      local c = g:getController()
+      if c then
+        M.safe("emcon.alarm", c.setOption, c, O.id.ALARM_STATE, O.val.ALARM_STATE.RED)
+      end
+    end
+  end
+  M.net.onNewNode = function(n)
+    local g = n.site.group
+    local c = g and g:getController()
+    if c then M.safe("emcon.alarm", c.setOption, c, O.id.ALARM_STATE, O.val.ALARM_STATE.RED) end
+    M.net.dirty = true
+  end
+  E.tick()
+  M.every("emcon.tick", 1, E.tick, 1)
+end
+end -- janus_emcon.lua
+
+-- ==================================================================== janus_debugview.lua
+do
+-- Janus IADS - check-mode view (DESIGN 4.8 "Debug view", 5.0.1): F10 map drawing of every node, its link to
+-- command and its state. Only runs when CHECK_MODE = true in the settings. Redrawn when the network changes.
+
+JANUS = JANUS or {}
+local M = JANUS
+local S = M.settings
+
+local D = {}
+M.debugview = D
+D.ids = {}
+D.nextId = 910000
+
+local ipairs = ipairs
+local COLOR = {
+  linked = { 0.1, 0.8, 0.1, 1 }, autonomous = { 1, 0.6, 0, 1 }, unlinked = { 1, 1, 0, 1 },
+  offline = { 0.5, 0.5, 0.5, 1 }, link = { 0.3, 0.6, 1, 0.8 },
+}
+local NOFILL = { 0, 0, 0, 0 }
+
+local function newId()
+  D.nextId = D.nextId + 1
+  D.ids[#D.ids + 1] = D.nextId
+  return D.nextId
+end
+
+function D.clear()
+  for _, id in ipairs(D.ids) do pcall(trigger.action.removeMark, id) end
+  D.ids = {}
+end
+
+local function stateOf(n)
+  if not (n.alive and n.working and n.powered) then return "offline" end
+  if n.autonomous then return "autonomous" end
+  if not n.linked then return "unlinked" end
+  return "linked"
+end
+
+function D.draw()
+  if not S.CHECK_MODE then return end
+  local A = trigger.action
+  if not (A.circleToAll and A.lineToAll and A.textToAll) then return end
+  D.clear()
+  for _, n in ipairs(M.net.list) do
+    if n.pos then
+      local st = stateOf(n)
+      local r = (n.kind == "EW") and math.min(n.detectionRange, 150000) or n.engageRange
+      if r and r > 0 then
+        A.circleToAll(-1, newId(), n.pos, r, COLOR[st], NOFILL, 2, true)
+      end
+      A.textToAll(-1, newId(), n.pos, COLOR[st], NOFILL, 12, true,
+        string.format("%s [%s %s] %s", n.name, n.kind, n.tier, st))
+      if n.parent and n.parent.pos and n.parent ~= n then
+        A.lineToAll(-1, newId(), n.pos, n.parent.pos, COLOR.link, 3, true)
+      end
+    end
+  end
+end
+
+function D.start()
+  if not S.CHECK_MODE then return end
+  M.net.onTopology = D.draw
+  D.draw()
+  M.every("debugview.redraw", 30, D.draw, 30)
+end
+end -- janus_debugview.lua
 
 -- ==================================================================== janus_setup.lua
+do
 -- Janus IADS - setup: find the mission's air-defence groups, classify their units against the
 -- DCS unit database, check that each site can actually work, and write the setup report.
 -- Phase 0: recognition + report + autostart. Phases 1+ build the network on top of JANUS.sites.
@@ -4552,6 +5444,7 @@ local function inspectGroup(group, parsed, coa)
   end
   return site
 end
+M.inspectGroup = inspectGroup
 
 -- Scan both coalitions. Returns the list of sites and fills M.report (lines of plain English).
 function M.scan()
@@ -4651,11 +5544,18 @@ function M.start(opts)
   M.safe("setup.scan", M.scan)
   M.safe("setup.report", M.printReport)
   M.startEvents()
+  -- Phase modules, in dependency order. Each is optional so a partial build still runs.
+  for _, mod in ipairs({ "net", "tracks", "emcon", "debugview" }) do
+    if M[mod] and M[mod].start then M.safe("setup.start." .. mod, M[mod].start) end
+  end
   M.startScheduler()
-  M.info("setup", string_format("started: red doctrine %s, blue doctrine %s, %d sites", S.RED_DOCTRINE, S.BLUE_DOCTRINE, #M.sites))
+  M.info("setup", string_format("started: red doctrine %s, blue doctrine %s, %d sites",
+    tostring(type(S.RED_DOCTRINE) == "table" and "custom" or S.RED_DOCTRINE),
+    tostring(type(S.BLUE_DOCTRINE) == "table" and "custom" or S.BLUE_DOCTRINE), #M.sites))
 end
 
 -- Autostart (zero-code install): ~1 s after the file loads, unless the settings file says not to.
 if S.AUTOSTART and timer and timer.scheduleFunction then
   timer.scheduleFunction(M.wrap("setup.autostart", function() M.start() end), nil, M.now() + S.AUTOSTART_DELAY)
 end
+end -- janus_setup.lua

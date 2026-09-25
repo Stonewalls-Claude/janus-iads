@@ -102,6 +102,7 @@ local function inspectGroup(group, parsed, coa)
   end
   return site
 end
+M.inspectGroup = inspectGroup
 
 -- Scan both coalitions. Returns the list of sites and fills M.report (lines of plain English).
 function M.scan()
@@ -201,8 +202,14 @@ function M.start(opts)
   M.safe("setup.scan", M.scan)
   M.safe("setup.report", M.printReport)
   M.startEvents()
+  -- Phase modules, in dependency order. Each is optional so a partial build still runs.
+  for _, mod in ipairs({ "net", "tracks", "emcon", "debugview" }) do
+    if M[mod] and M[mod].start then M.safe("setup.start." .. mod, M[mod].start) end
+  end
   M.startScheduler()
-  M.info("setup", string_format("started: red doctrine %s, blue doctrine %s, %d sites", S.RED_DOCTRINE, S.BLUE_DOCTRINE, #M.sites))
+  M.info("setup", string_format("started: red doctrine %s, blue doctrine %s, %d sites",
+    tostring(type(S.RED_DOCTRINE) == "table" and "custom" or S.RED_DOCTRINE),
+    tostring(type(S.BLUE_DOCTRINE) == "table" and "custom" or S.BLUE_DOCTRINE), #M.sites))
 end
 
 -- Autostart (zero-code install): ~1 s after the file loads, unless the settings file says not to.
