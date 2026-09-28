@@ -426,12 +426,35 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 - It stays in the StonewallC standard as the IADS **only after** it wins on the bench. Skynet
   remains the standard until then.
 
+### 8A. Phase 2 fix list (from bench 01, agreed 2026-09-27) - items 1-5 built 2026-09-27, bench 02 (`JANUS_BENCH_02.miz`) queued
+1. **EW cover after C2 loss is doctrine-driven** (`c2LossCue = { mode, range, delay[tier] }` per profile), keeping
+   "linked to command" and "under EW cover" separate:
+   | Doctrine | EW feed after the command post is lost |
+   |---|---|
+   | SOVIET_PVO_1985 / RUSSIA_MODERN | voice relay from a working EW within short range; long cue delay, coarse position; batteries fall back to their own acquisition radar sooner |
+   | NATO_COLDWAR / US_MODERN | data link keeps flowing: any linked EW/AWACS still cues batteries; engagement becomes decentralized (autonomous authority) |
+   | NVA_VIETNAM_1965_72 | voice and ground observers only; slow, short range |
+   | GENERIC_THIRD_WORLD | none: batteries blind except their own radar (Iraq 1991 case) |
+   Cost: reuses the 1-s coverage pass; no new polling.
+2. POWER, COMMS and CMD nodes get no link-lost or autonomy messages (only emitters and batteries do).
+3. Network summary must not list a C2 node as its own parent (`CMD North -> CMD North`).
+4. Keep a site emitting while its own missiles are in flight at a live target (S_EVENT_SHOT bookkeeping).
+5. Bench 02: kill the relay before CMD (or use a second network) so the relay-loss path is exercised.
+
+### 8B. Phase 3 research items (parked, not for build yet)
+- HARM has inertial memory (flies to the last known emitter position, larger miss distance) and the F-16 HTS pod
+  allows POS/PB shots at stored coordinates: going dark lowers the hit chance but does not guarantee a miss
+  (bench 01: SA-6 STR hit 39 s after going dark). Re-probe dark-after-launch timings; include Kh-58/Kh-31P.
+- SAM relocation ("shoot and scoot") needs real teardown/move/set-up times per system before it is modelled.
+- Moving ground units is expensive in DCS: research best practices (and possible regional culling) before any
+  relocation feature; performance first.
+
 ## 9. Phases
 | Phase | Delivers | Exit gate |
 |---|---|---|
 | 0 | Unit data generated from the DCS datamine + Olympus databases; battery preset data with sources; project skeleton, build, harness; C-RAM/AI engagement probe mission | **Done 2026-09-24.** Probe run 1 (`docs/PROBE_RESULTS.md`): C-RAM never engages weapons in DCS (aircraft only); Kh-31P flight 102 s, unopposed |
 | 0.5 | Probe runs 2 (JANUS_PROBE_V2.miz) and 3 (JANUS_PROBE_V3.miz): ARM defence, weapon tracking, EMCON timing, cross-group cueing, ARM memory, janus.lua smoke test | **Done 2026-09-25** (`docs/PROBE_RESULTS.md`): Tor/Pantsir shoot HARMs 9-13 s after launch; EW radars hold ARMs at 100+ km within 2 s (filter needed); `enableEmission` is instant, ALARM warm-up 5-55 s; launchers need a radar in their own group; Shrike and HARM both miss once the radar goes dark; janus.lua runs clean in DCS. Open, not blocking: Patriot vs red ARMs (red AI never launched), SA-2/SA-5 radar state without a target |
-| 1 | Network model, links, C2/comms/power, EW, batteries, autonomy, EMCON | Harness green; red network runs on the bench. **Code + harness done 2026-09-25** (60 new checks, lint clean); bench 01 (`JANUS_BENCH_01.miz`) queued |
+| 1 | Network model, links, C2/comms/power, EW, batteries, autonomy, EMCON | Harness green; red network runs on the bench. **Done 2026-09-27** (`docs/BENCH_RESULTS.md`): bench 01 ran with no Janus errors; cueing, power reserve, C2 loss, 180 s autonomy, periodic EMCON, own-track hold and restart times all behaved as designed. To fix: POWER/COMMS link and autonomy log noise, C2 listed as its own parent, relay-loss path untested (bench ordering). Open: should EW cue batteries directly after C2 loss? A HARM hit an SA-6 radar 39 s after it went dark (feeds Phase 3) |
 | 2 | Track picture, WTA with kill probability, handoffs | Beats Skynet on the bench, excluding HARM effects |
 | 3 | Launch detection and HARM defence ladder, point defence, C-RAM | Beats Skynet on the full bench, repeated runs |
 | 4 | Blue doctrine, naval, AWACS, AAA, Vietnam profiles, battery-preset spawning, both coalitions at once | Blue and Vietnam benches plus dual-side performance targets met |

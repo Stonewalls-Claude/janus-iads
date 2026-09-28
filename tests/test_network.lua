@@ -1,5 +1,6 @@
--- Phase 1 tests: network build, links through relays, power and reserve, autonomy, EMCON policies with the
--- Janus restart rule, EW cover, spawn pickup, tags, rotating EW, error isolation, and tick cost.
+-- Phase 1/2 tests: network build, links through relays, power and reserve, autonomy, EMCON policies with the
+-- Janus restart rule, EW cover and the doctrine's EW feed after command loss, spawn pickup, tags, rotating EW,
+-- error isolation, log noise, missiles-in-flight hold, and tick cost.
 local F = dofile("tests/fake_dcs.lua")
 local JANUS_FILE = arg and arg[1] or "dist/janus.lua"
 local RED, BLUE = coalition.side.RED, coalition.side.BLUE
@@ -107,7 +108,7 @@ do
   check(F.emitting("SAM SA-10 Hama"), "up once the 60 s restart time has passed")
 end
 
--- ---------------------------------------------------------------- 3. command lost -> autonomy -> periodic
+-- ---------------------------------------------------------------- 3. command lost -> autonomy; SOVIET voice relay
 do
   F.reset()
   redNetwork()
@@ -117,15 +118,79 @@ do
   F.run(12)
   check(not node("SAM SA-10 Hama").linked and not node("SAM SA-10 Hama").autonomous, "unlinked, not yet autonomous")
   check(F.logContains("SAM SA-10 Hama lost its link to command"), "link loss logged")
+  -- SOVIET_PVO_1985 c2LossCue: voice relay from an EW within 60 km
+  check(node("SAM SA-10 Hama").covered and node("SAM SA-10 Hama").coverVia == "voice", "SA-10 (30 km from EW North) under voice cover")
+  check(node("SAM SA-10 Hama").feeders and node("SAM SA-10 Hama").feeders[1] == node("EW North"), "fed by EW North")
+  check(F.logContains("SAM SA-10 Hama under voice cover from EW North"), "voice cover logged")
+  check(J.emcon.policyFor(node("SAM SA-10 Hama")) == "cued", "voice-covered battery stays cued")
+  check(not node("SAM SA-6 Far").covered, "SA-6 Far (150 km from any EW) lost cover")
+  local lost = 0
+  for _, l in ipairs(F.log) do if l:find("SAM SA-6 Far lost EW cover", 1, true) then lost = lost + 1 end end
+  check(lost == 1, "lost cover logged once (" .. lost .. ")")
+  check(J.emcon.policyFor(node("SAM SA-6 Far")) == "periodic", "uncovered battery periodic")
   F.run(12 + 181)                               -- SOVIET_PVO_1985 REG = 180 s
   check(node("SAM SA-10 Hama").autonomous, "autonomous after the REG delay")
-  check(J.emcon.policyFor(node("SAM SA-10 Hama")) == "periodic", "autonomous policy periodic")
+  check(J.emcon.policyFor(node("SAM SA-10 Hama")) == "cued", "still cued: autonomy does not cut the voice feed")
   local ons, offs = 0, 0
   for _ = 1, 150 do
     F.run(F.time + 1)
-    if F.emitting("SAM SA-10 Hama") then ons = ons + 1 else offs = offs + 1 end
+    if F.emitting("SAM SA-6 Far") then ons = ons + 1 else offs = offs + 1 end
   end
   check(ons >= 25 and ons <= 60 and offs >= 80, "periodic pattern ~15 on / 60 off (on " .. ons .. ", off " .. offs .. ")")
+end
+
+-- ---------------------------------------------------------------- 3b. voice cue is slower than a network cue
+do
+  F.reset()
+  redNetwork()
+  local b = bandit("Viper 4", 400000, 0)
+  load()
+  F.sees["EW North"] = { b }
+  F.run(5)
+  F.killGroup(F.groups["CMD Hama"])
+  F.run(12)
+  F.move(b, 150000, 0)
+  F.run(50)
+  check(not F.emitting("SAM SA-10 Hama"), "voice cue: not up after network delay alone (6 s REG)")
+  F.run(100)
+  check(F.emitting("SAM SA-10 Hama"), "voice cue: up after 6 + 60 s REG")
+  check(F.logContains("SAM SA-10 Hama ON (cued, track"), "cued ON logged")
+end
+
+-- ---------------------------------------------------------------- 3c. US_MODERN datalink keeps far batteries fed
+do
+  F.reset()
+  F.addGroup{ name = "CMD Blue", coalition = BLUE, units = { { type = "MLRS FDDM", x = 0, z = 0 } } }
+  F.addGroup{ name = "EW Blue", coalition = BLUE, units = { { type = "FPS-117", x = 10000, z = 0 } } }
+  F.addGroup{ name = "SAM Hawk Far", coalition = BLUE, units = { { type = "Hawk tr", x = 110000, z = 0 }, { type = "Hawk ln", x = 110200, z = 0 } } }
+  F.addGroup{ name = "SAM Hawk Vets VET", coalition = BLUE, units = { { type = "Hawk tr", x = 60000, z = 30000 }, { type = "Hawk ln", x = 60200, z = 30000 } } }
+  F.addGroup{ name = "SAM Hawk Out", coalition = BLUE, units = { { type = "Hawk tr", x = 300000, z = 0 }, { type = "Hawk ln", x = 300200, z = 0 } } }
+  local J = load()
+  F.run(5)
+  check(node("SAM Hawk Far").coverVia == "net", "Hawk under network cover")
+  check(node("SAM Hawk Far").feedDelay == 0 and node("SAM Hawk Far").feeders == nil, "network cover adds no feed delay")
+  F.killGroup(F.groups["CMD Blue"])
+  F.run(12)
+  check(node("SAM Hawk Far").covered and node("SAM Hawk Far").coverVia == "datalink", "Hawk 100 km away still fed by datalink")
+  check(J.emcon.policyFor(node("SAM Hawk Far")) == "cued", "datalink-covered Hawk stays cued")
+  check(node("SAM Hawk Far").feedDelay == 5, "datalink delay REG 5 s (got " .. tostring(node("SAM Hawk Far").feedDelay) .. ")")
+  check(node("SAM Hawk Vets VET").feedDelay == 3, "datalink delay VET 3 s (got " .. tostring(node("SAM Hawk Vets VET").feedDelay) .. ")")
+  check(not node("SAM Hawk Out").covered, "Hawk 290 km from the EW: outside the 250 km datalink range")
+  local n = 0
+  for _, l in ipairs(F.log) do if l:find("SAM Hawk Far under datalink cover from EW Blue", 1, true) then n = n + 1 end end
+  check(n == 1, "cover change logged once, not every tick (" .. n .. ")")
+end
+
+-- ---------------------------------------------------------------- 3d. GENERIC_THIRD_WORLD: no feed after C2 loss
+do
+  F.reset()
+  redNetwork()
+  local J = load{ RED_DOCTRINE = "GENERIC_THIRD_WORLD" }
+  F.run(5)
+  F.killGroup(F.groups["CMD Hama"])
+  F.run(12)
+  check(not node("SAM SA-10 Hama").covered, "third world: no EW feed without the command post")
+  check(J.emcon.policyFor(node("SAM SA-10 Hama")) == "always", "falls back to its own radar (always on)")
 end
 
 -- ---------------------------------------------------------------- 4. relay lost cuts only what is behind it
@@ -239,6 +304,118 @@ do
     if v == "circle" then circles = circles + 1 elseif v == "line" then lines = lines + 1 else texts = texts + 1 end
   end
   check(texts == 6 and lines >= 3 and circles >= 3, "F10 marks drawn (" .. texts .. " texts, " .. lines .. " lines, " .. circles .. " circles)")
+end
+
+-- ---------------------------------------------------------------- 12. no link/autonomy noise, no self-parent
+do
+  F.reset()
+  redNetwork()
+  F.addGroup{ name = "PD Tor Hama", units = { { type = "Tor 9A331", x = 5000, z = 0 } } }
+  F.addGroup{ name = "AAA ZU Hama", units = { { type = "ZU-23 Emplacement", x = 4000, z = 0 } } }
+  F.addGroup{ name = "SHIP Molniya", category = Group.Category.SHIP, units = { { type = "ALBATROS", x = 3000, z = -20000 } } }
+  load()
+  F.run(5)
+  check(node("CMD Hama").parent == nil, "command post is not its own parent")
+  check(node("CMD Hama").linked and not F.logContains("CMD Hama [C2 REG] (NOT LINKED)"), "command post counts as linked")
+  check(not F.logContains("CMD Hama [C2 REG] -> CMD Hama"), "summary: no self-parent")
+  check(not F.logContains("POWER EW Gen [POWER REG] (NOT LINKED)") and node("POWER EW Gen").linked, "power plant never reported unlinked")
+  check(not F.logContains("POWER EW Gen lost its link"), "no power-plant link message")
+  F.killGroup(F.groups["CMD Hama"])
+  F.run(400)
+  check(not F.logContains("CMD Hama lost its link"), "dead command post: no link message")
+  check(not F.logContains("COMMS Relay North lost its link") and not F.logContains("COMMS Relay North is now autonomous"), "relay: no link/autonomy noise")
+  check(not F.logContains("POWER EW Gen is now autonomous") and not F.logContains("CMD Hama is now autonomous"), "power/CMD: no autonomy noise")
+  check(F.logContains("EW North is now autonomous") and F.logContains("SAM SA-10 Hama is now autonomous"), "emitters and batteries still report autonomy")
+  check(F.logContains("PD Tor Hama is now autonomous") and F.logContains("AAA ZU Hama is now autonomous")
+    and F.logContains("SHIP Molniya is now autonomous"), "PD, AAA and ships report autonomy")
+end
+
+-- ---------------------------------------------------------------- 13. own missiles in flight hold the radar up
+do
+  F.reset()
+  redNetwork()
+  local b = bandit("Viper 5", 150000, 0)
+  local J = load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", cueHold = 2, minOn = 2 } }
+  local sa10
+  local function holds()
+    local c = 0
+    for _, l in ipairs(F.log) do if l:find("SAM SA-10 Hama held up: own missiles in flight", 1, true) then c = c + 1 end end
+    return c
+  end
+  local function missile(target)
+    local m = { alive = true }
+    function m:isExist() return self.alive end
+    function m:getTarget() return target end
+    return m
+  end
+  F.sees["EW North"] = { b }
+  F.run(40)
+  sa10 = node("SAM SA-10 Hama")
+  check(F.emitting("SAM SA-10 Hama"), "up when cued")
+  local ln = F.groups["SAM SA-10 Hama"].units[2]
+  local m1 = missile(b)
+  F.fire({ id = world.event.S_EVENT_SHOT, initiator = ln, weapon = m1 })
+  check(sa10.emcon.shots and #sa10.emcon.shots == 1, "shot recorded against the launcher's site")
+  F.move(b, 400000, 0)                          -- target leaves the cue: policy wants the radar dark
+  F.run(80)
+  check(F.emitting("SAM SA-10 Hama"), "held up while its missile flies at a live target")
+  check(holds() == 1, "hold logged once (" .. holds() .. ")")
+  m1.alive = false                              -- missile gone
+  F.run(90)
+  check(not F.emitting("SAM SA-10 Hama"), "dark once the missile is gone")
+  -- second engagement: a new hold is reported again
+  F.move(b, 150000, 0)
+  F.run(200)
+  check(F.emitting("SAM SA-10 Hama"), "up again when cued")
+  local m2 = missile(b)
+  F.fire({ id = world.event.S_EVENT_SHOT, initiator = ln, weapon = m2 })
+  F.move(b, 400000, 0)
+  F.run(230)
+  check(F.emitting("SAM SA-10 Hama") and holds() == 2, "second hold (" .. holds() .. " hold lines)")
+  -- a missile that never goes away is dropped after SHOT_HOLD_MAX (120 s)
+  F.run(200 + 115)
+  check(F.emitting("SAM SA-10 Hama"), "still held at 115 s after the shot")
+  F.run(200 + 135)
+  check(not F.emitting("SAM SA-10 Hama"), "released after SHOT_HOLD_MAX")
+  -- a missile whose target is already dead does not hold the radar
+  F.move(b, 150000, 0)
+  F.run(500)
+  check(F.emitting("SAM SA-10 Hama"), "up again for the third engagement")
+  F.fire({ id = world.event.S_EVENT_SHOT, initiator = ln, weapon = missile(b) })
+  F.kill(b)
+  F.run(530)
+  check(not F.emitting("SAM SA-10 Hama"), "target dead: no hold")
+  check(J.emcon.missilesInFlight(sa10, F.time) == false, "shot list cleared")
+  -- malformed or foreign SHOT events are ignored without errors
+  local red = F.addGroup{ name = "Convoy 9", units = { { type = "Ural-375", x = 1000, z = 0 } } }
+  local bad = setmetatable({}, { __index = function(_, k) if k == "getGroup" then return function() error("no group") end end end })
+  F.fire({ id = world.event.S_EVENT_SHOT, initiator = nil, weapon = missile(nil) })
+  F.fire({ id = world.event.S_EVENT_SHOT, initiator = ln, weapon = nil })
+  F.fire({ id = world.event.S_EVENT_SHOT, initiator = red.units[1], weapon = missile(nil) })
+  function bad:getCategory() return Object.Category.UNIT end
+  F.fire({ id = world.event.S_EVENT_SHOT, initiator = bad, weapon = missile(nil) })
+  check(#sa10.emcon.shots == 0, "no shot recorded from malformed events")
+  check(J.errorCount("emcon.shot") == 0, "malformed SHOT events raise no errors (" .. J.errorCount("emcon.shot") .. ")")
+end
+
+-- ---------------------------------------------------------------- 14. doctrine c2LossCue table (DESIGN 8A)
+do
+  F.reset()
+  local J = load()
+  local want = {
+    SOVIET_PVO_1985 = { "voice", 60000, 90, 60, 45, 30 },
+    RUSSIA_MODERN = { "voice", 80000, 45, 30, 20, 15 },
+    NATO_COLDWAR = { "datalink", 150000, 15, 10, 6, 4 },
+    US_MODERN = { "datalink", 250000, 8, 5, 3, 2 },
+    NVA_VIETNAM_1965_72 = { "voice", 30000, 120, 90, 60, 45 },
+    US_VIETNAM_1965_72 = { "voice", 40000, 60, 40, 30, 20 },
+  }
+  for name, w in pairs(want) do
+    local c = J.Doctrines[name].c2LossCue
+    check(c.mode == w[1] and c.range == w[2] and c.delay.GRN == w[3] and c.delay.REG == w[4]
+      and c.delay.VET == w[5] and c.delay.ACE == w[6], name .. " c2LossCue matches DESIGN 8A")
+  end
+  check(J.Doctrines.GENERIC_THIRD_WORLD.c2LossCue.mode == "none", "GENERIC_THIRD_WORLD has no feed")
 end
 
 -- ---------------------------------------------------------------- 11. tick cost with 150 nodes and 30 aircraft

@@ -95,7 +95,8 @@ function T.tick()
   end
 end
 
--- Closest track inside `range` of the node: the network picture if the node is linked, plus its own radar.
+-- Closest track inside `range` of the node: the network picture if the node is linked, the radars feeding it after
+-- command loss (node.feeders, set by EMCON coverage), plus its own radar.
 function T.nearest(node, range)
   if not node.pos then return nil end
   local r2 = range * range
@@ -109,6 +110,9 @@ function T.nearest(node, range)
     end
   end
   if node.linked then scan(node.net.tracks) end
+  if node.feeders then                           -- cut off from command: plots from EW radars (c2LossCue)
+    for i = 1, #node.feeders do scan(node.feeders[i].localTracks) end
+  end
   scan(node.localTracks)
   return best, bestD and math.sqrt(bestD)
 end

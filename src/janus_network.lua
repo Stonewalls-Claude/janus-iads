@@ -35,6 +35,10 @@ local RADAR_ROLES = { EWR = true, SR = true, STR = true, TR = true, TELAR = true
 local SHOOTER_ROLES = { LN = true, TELAR = true, SHORAD = true, CRAM = true, AAA = true, MANPADS = true, NAVAL_AD = true }
 
 local TIERS = { GRN = true, REG = true, VET = true, ACE = true }
+-- only these kinds report link changes and go autonomous; command posts, relays and power plants are the
+-- network itself, so a message about them "losing command" is noise (bench 01)
+local REPORTS_LINK = { EW = true, BATTERY = true, PD = true, AAA = true, NAVAL = true }
+N.REPORTS_LINK = REPORTS_LINK
 
 function N.on(kind, fn)
   local list = N.callbacks[kind]
@@ -206,10 +210,11 @@ local function computeLinks(net, now)
   end
   for _, n in ipairs(net.nodes) do
     local linked, parent = false, nil
-    if not net.hasC2 then
-      linked = true                                  -- flat network: no command posts, everyone shares
+    if not net.hasC2 or n.kind == "POWER" then
+      linked = true                                  -- flat network, or a power plant (needs no command link)
     elseif reached[n] then
-      linked, parent = true, reached[n]
+      linked = true
+      if reached[n] ~= n then parent = reached[n] end  -- a command post is the root, not its own parent
     elseif n.kind ~= "C2" and n.kind ~= "POWER" and n.pos then
       local want = findByLabel(net, "C2", n.site.tags.cmd)
       local viaRelay = findByLabel(net, "COMMS", n.site.tags.relay)
@@ -227,17 +232,18 @@ local function computeLinks(net, now)
       end
     end
     n.parent = parent
+    local report = REPORTS_LINK[n.kind] and n.alive
     if linked then
       if n.autonomous then
         n.autonomous = false
-        M.info("net", string_format("%s %s link to command restored", net.key, n.name))
+        if report then M.info("net", string_format("%s %s link to command restored", net.key, n.name)) end
         fire("linked", n)
       end
       n.linked, n.unlinkedSince = true, nil
     else
       if n.linked then
         n.linked, n.unlinkedSince = false, now
-        M.info("net", string_format("%s %s lost its link to command", net.key, n.name))
+        if report then M.info("net", string_format("%s %s lost its link to command", net.key, n.name)) end
       end
     end
   end
@@ -271,7 +277,7 @@ end
 local function updateAutonomy(net, now)
   local delays = net.doctrine.autonomyDelay
   for _, n in ipairs(net.nodes) do
-    if not n.linked and not n.autonomous and n.unlinkedSince then
+    if REPORTS_LINK[n.kind] and n.alive and not n.linked and not n.autonomous and n.unlinkedSince then
       if now - n.unlinkedSince >= (delays[n.tier] or delays.REG) then
         n.autonomous = true
         M.info("net", string_format("%s %s is now autonomous (%s crew)", net.key, n.name, n.tier))

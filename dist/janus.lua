@@ -4481,6 +4481,11 @@ do
 --                    switches instantly, so without this rule a site could dodge every ARM)
 --   restartByType    per DCS unit type overrides of restart
 --   minOn            once up, a radar stays up at least this long (stops flicker)
+--   c2LossCue        how early warning still reaches batteries that have lost their command post (DESIGN 8A):
+--                      mode  "datalink" (the picture keeps flowing, e.g. Link 16), "voice" (plots passed by
+--                            radio/telephone from a nearby EW radar), or "none" (only the battery's own radar)
+--                      range an EW radar within this distance of the battery (and seeing that far) can feed it
+--                      delay per crew tier: extra reaction time on top of cueDelay for a cue that comes this way
 
 JANUS = JANUS or {}
 local M = JANUS
@@ -4498,6 +4503,7 @@ local BASE = {
   rotating = { share = 0.5, period = 120 },
   restart = { LR = 10, MR = 8, SR = 5, NONE = 5 },
   restartByType = { ["RPC_5N62V"] = 25, ["SNR_75V"] = 10, ["snr s-125 tr"] = 10 },
+  c2LossCue = { mode = "voice", range = 40000, delay = TIER(60, 40, 30, 20) },
 }
 
 local function derive(base, changes)
@@ -4529,6 +4535,8 @@ M.Doctrines = {
     autonomyDelay = TIER(300, 180, 120, 60),
     autonomous = { BATTERY = "periodic", PD = "periodic" },
     periodic = { on = 15, off = 60 },
+    -- regimental CP gone: battalions fight on their own radar, radar companies still phone plots in
+    c2LossCue = { mode = "voice", range = 60000, delay = TIER(90, 60, 45, 30) },
   }),
   -- Faster autonomy, EW radars rotate to spread their exposure, point defence stays close to always-on.
   RUSSIA_MODERN = derive(BASE, {
@@ -4538,12 +4546,14 @@ M.Doctrines = {
     emcon = { EW = "rotating", PD = "cued" },
     rotating = { share = 0.5, period = 90 },
     periodic = { on = 20, off = 30 },
+    c2LossCue = { mode = "voice", range = 80000, delay = TIER(45, 30, 20, 15) },
   }),
   -- Delegated authority: batteries act on their own sooner; AWACS-led picture.
   NATO_COLDWAR = derive(BASE, {
     name = "NATO_COLDWAR",
     autonomyDelay = TIER(90, 60, 30, 20),
     autonomous = { BATTERY = "periodic", PD = "always" },
+    c2LossCue = { mode = "datalink", range = 150000, delay = TIER(15, 10, 6, 4) },
   }),
   -- Data-linked picture, fast reactions, point defence always up around protected assets.
   US_MODERN = derive(BASE, {
@@ -4553,6 +4563,8 @@ M.Doctrines = {
     emcon = { PD = "always" },
     autonomous = { BATTERY = "periodic", PD = "always" },
     periodic = { on = 30, off = 30 },
+    -- Link 16: the picture does not depend on one command post; engagement goes decentralized
+    c2LossCue = { mode = "datalink", range = 250000, delay = TIER(8, 5, 3, 2) },
   }),
   -- North Vietnam 1965-72: Fan Song emits for seconds only, sites cued by early warning, AAA always ready.
   NVA_VIETNAM_1965_72 = derive(BASE, {
@@ -4560,6 +4572,7 @@ M.Doctrines = {
     cueFactor = 1.0, cueHold = 15, minOn = 8,
     autonomyDelay = TIER(240, 150, 90, 60),
     periodic = { on = 10, off = 60 },
+    c2LossCue = { mode = "voice", range = 30000, delay = TIER(120, 90, 60, 45) },
   }),
   -- US Vietnam era: Hawk batteries defending airbases, simple procedural control.
   US_VIETNAM_1965_72 = derive(BASE, {
@@ -4574,6 +4587,7 @@ M.Doctrines = {
     autonomyDelay = TIER(400, 300, 200, 120),
     emcon = { BATTERY = "always", PD = "always" },
     autonomous = { BATTERY = "always", PD = "always" },
+    c2LossCue = { mode = "none" },         -- Iraq 1991: without the centre, sites are on their own
   }),
 }
 
@@ -4631,6 +4645,10 @@ local RADAR_ROLES = { EWR = true, SR = true, STR = true, TR = true, TELAR = true
 local SHOOTER_ROLES = { LN = true, TELAR = true, SHORAD = true, CRAM = true, AAA = true, MANPADS = true, NAVAL_AD = true }
 
 local TIERS = { GRN = true, REG = true, VET = true, ACE = true }
+-- only these kinds report link changes and go autonomous; command posts, relays and power plants are the
+-- network itself, so a message about them "losing command" is noise (bench 01)
+local REPORTS_LINK = { EW = true, BATTERY = true, PD = true, AAA = true, NAVAL = true }
+N.REPORTS_LINK = REPORTS_LINK
 
 function N.on(kind, fn)
   local list = N.callbacks[kind]
@@ -4802,10 +4820,11 @@ local function computeLinks(net, now)
   end
   for _, n in ipairs(net.nodes) do
     local linked, parent = false, nil
-    if not net.hasC2 then
-      linked = true                                  -- flat network: no command posts, everyone shares
+    if not net.hasC2 or n.kind == "POWER" then
+      linked = true                                  -- flat network, or a power plant (needs no command link)
     elseif reached[n] then
-      linked, parent = true, reached[n]
+      linked = true
+      if reached[n] ~= n then parent = reached[n] end  -- a command post is the root, not its own parent
     elseif n.kind ~= "C2" and n.kind ~= "POWER" and n.pos then
       local want = findByLabel(net, "C2", n.site.tags.cmd)
       local viaRelay = findByLabel(net, "COMMS", n.site.tags.relay)
@@ -4823,17 +4842,18 @@ local function computeLinks(net, now)
       end
     end
     n.parent = parent
+    local report = REPORTS_LINK[n.kind] and n.alive
     if linked then
       if n.autonomous then
         n.autonomous = false
-        M.info("net", string_format("%s %s link to command restored", net.key, n.name))
+        if report then M.info("net", string_format("%s %s link to command restored", net.key, n.name)) end
         fire("linked", n)
       end
       n.linked, n.unlinkedSince = true, nil
     else
       if n.linked then
         n.linked, n.unlinkedSince = false, now
-        M.info("net", string_format("%s %s lost its link to command", net.key, n.name))
+        if report then M.info("net", string_format("%s %s lost its link to command", net.key, n.name)) end
       end
     end
   end
@@ -4867,7 +4887,7 @@ end
 local function updateAutonomy(net, now)
   local delays = net.doctrine.autonomyDelay
   for _, n in ipairs(net.nodes) do
-    if not n.linked and not n.autonomous and n.unlinkedSince then
+    if REPORTS_LINK[n.kind] and n.alive and not n.linked and not n.autonomous and n.unlinkedSince then
       if now - n.unlinkedSince >= (delays[n.tier] or delays.REG) then
         n.autonomous = true
         M.info("net", string_format("%s %s is now autonomous (%s crew)", net.key, n.name, n.tier))
@@ -5048,7 +5068,8 @@ function T.tick()
   end
 end
 
--- Closest track inside `range` of the node: the network picture if the node is linked, plus its own radar.
+-- Closest track inside `range` of the node: the network picture if the node is linked, the radars feeding it after
+-- command loss (node.feeders, set by EMCON coverage), plus its own radar.
 function T.nearest(node, range)
   if not node.pos then return nil end
   local r2 = range * range
@@ -5062,6 +5083,9 @@ function T.nearest(node, range)
     end
   end
   if node.linked then scan(node.net.tracks) end
+  if node.feeders then                           -- cut off from command: plots from EW radars (c2LossCue)
+    for i = 1, #node.feeders do scan(node.feeders[i].localTracks) end
+  end
   scan(node.localTracks)
   return best, bestD and math.sqrt(bestD)
 end
@@ -5087,6 +5111,8 @@ E.onChange = {}
 local string_format = string.format
 local pairs, ipairs = pairs, ipairs
 
+E.SHOT_HOLD_MAX = 120   -- a site never stays up longer than this for one missile (lost weapons, odd targets)
+
 local POLICIES = { always = true, dark = true, cued = true, periodic = true, rotating = true }
 local MANAGED = { EW = true, BATTERY = true, PD = true, AAA = true, NAVAL = true, C2 = true }
 
@@ -5105,35 +5131,70 @@ function E.policyFor(n)
   local tag = n.site.tags.emcon
   if tag and POLICIES[string.lower(tag)] then return string.lower(tag) end
   local d = n.net.doctrine
-  if n.autonomous or ((n.kind == "BATTERY" or n.kind == "PD") and not n.covered) then
+  if n.kind == "BATTERY" or n.kind == "PD" then
+    -- a battery that still gets early warning (through the network, or by c2LossCue after losing command)
+    -- keeps its linked EMCON policy; without it the crew falls back to searching on its own radar
+    if n.covered then return d.emcon[n.kind] or "cued" end  -- mutate: ok fallback only for a custom table missing a kind
     return d.autonomous[n.kind] or "periodic"
   end
+  if n.autonomous then return d.autonomous[n.kind] or "always" end  -- mutate: ok fallback only for a custom table missing a kind
   return d.emcon[n.kind] or "always"
 end
 
--- A battery is covered when a linked, working EW radar (not held dark) can see its area.
+-- A battery is covered when a working EW radar (not held dark) can see its area and its plots reach the battery:
+-- through the network while both are linked, otherwise the doctrine's c2LossCue decides (DESIGN 8A):
+-- "datalink"/"voice" = an EW within c2LossCue.range feeds it (voice with a longer delay), "none" = nobody does.
+local function ewRange(ew) return ew.detectionRange > 0 and ew.detectionRange or 100000 end  -- mutate: ok default for an EW type with no DB range (none today)
+
 local function updateCoverage(net)
   local ews = {}
   for _, n in ipairs(net.nodes) do
-    if n.kind == "EW" and n.alive and n.working and n.powered and n.linked and n.pos
+    if n.kind == "EW" and n.alive and n.working and n.powered and n.pos
        and string.lower(n.site.tags.emcon or "") ~= "dark" then
       ews[#ews + 1] = n
     end
   end
+  local fb = net.doctrine.c2LossCue or {}
+  local fbMode = fb.mode or "none"
+  local fbRange = fb.range or 0   -- mutate: ok every profile sets range; custom tables without one get no feed
   for _, n in ipairs(net.nodes) do
     if n.kind == "BATTERY" or n.kind == "PD" then
-      local cov = false
-      if n.pos and n.linked then
-        for _, ew in ipairs(ews) do
-          local dx, dz = ew.pos.x - n.pos.x, ew.pos.z - n.pos.z
-          local r = ew.detectionRange > 0 and ew.detectionRange or 100000
-          if dx * dx + dz * dz <= r * r then cov = true; break end
+      local via, feeders = nil, nil
+      if n.pos then
+        if n.linked then
+          for _, ew in ipairs(ews) do
+            if ew.linked then
+              local r = ewRange(ew)
+              local dx, dz = ew.pos.x - n.pos.x, ew.pos.z - n.pos.z
+              if dx * dx + dz * dz <= r * r then via = "net"; break end
+            end
+          end
+        end
+        if not via and fbMode ~= "none" then
+          for _, ew in ipairs(ews) do
+            local r = math.min(ewRange(ew), fbRange)
+            local dx, dz = ew.pos.x - n.pos.x, ew.pos.z - n.pos.z
+            if dx * dx + dz * dz <= r * r then
+              feeders = feeders or {}
+              feeders[#feeders + 1] = ew
+            end
+          end
+          if feeders then via = fbMode end
         end
       end
-      if n.covered ~= nil and n.covered ~= cov then
-        M.info("emcon", string_format("%s %s %s EW cover", net.key, n.name, cov and "back under" or "lost"))
+      local cov = via ~= nil
+      if n.coverVia ~= via and n.covered ~= nil then
+        if not cov then
+          M.info("emcon", string_format("%s %s lost EW cover", net.key, n.name))
+        elseif via == "net" then
+          M.info("emcon", string_format("%s %s back under EW cover", net.key, n.name))
+        else
+          local first = feeders and feeders[1]
+          M.info("emcon", string_format("%s %s under %s cover from %s", net.key, n.name, via, first and first.name or "?"))
+        end
       end
-      n.covered = cov
+      n.covered, n.coverVia, n.feeders = cov, via, feeders
+      n.feedDelay = feeders and fb.delay and (fb.delay[n.tier] or fb.delay.REG) or 0
     end
   end
   return ews
@@ -5171,7 +5232,7 @@ function E.want(n, policy, now)
     if tr then
       em.cuedAt = em.cuedAt or now
       em.lastCue = now
-      local delay = d.cueDelay[n.tier] or d.cueDelay.REG
+      local delay = (d.cueDelay[n.tier] or d.cueDelay.REG) + (n.feedDelay or 0)  -- mutate: ok coverage always sets feedDelay; tiers always present
       if now - em.cuedAt >= delay then return true, string_format("cued, track %.0f km", dist / 1000) end
       return em.on == true, "cue pending"
     end
@@ -5196,6 +5257,36 @@ function E.want(n, policy, now)
     return ((now + em.phase) % cycle) < p.on, "periodic"
   end
   return true, "unknown policy"
+end
+
+-- Own missiles still flying at a live target keep the radar up (bench 01: a periodic site must not drop its
+-- guidance mid-flight). Bookkeeping from S_EVENT_SHOT; bounded by SHOT_HOLD_MAX.
+local function missilesInFlight(n, now)
+  local shots = n.emcon.shots
+  if not shots then return false end
+  for i = #shots, 1, -1 do   -- mutate: ok a step of -2 from index 1 still visits every entry it must
+    local s = shots[i]
+    local w = s.weapon
+    local flying = now - s.t <= E.SHOT_HOLD_MAX and w ~= nil and w.isExist ~= nil and w:isExist()
+    if flying and w.getTarget then   -- mutate: ok asking a gone weapon for its target changes nothing
+      local ok, tgt = pcall(w.getTarget, w)
+      if ok and tgt ~= nil and tgt.isExist and not tgt:isExist() then flying = false end
+    end
+    if not flying then table.remove(shots, i) end
+  end
+  return #shots > 0
+end
+E.missilesInFlight = missilesInFlight
+
+function E.onShot(e)
+  local u = e.initiator
+  if not (u and e.weapon and u.getGroup and Object.getCategory(u) == Object.Category.UNIT) then return end
+  local ok, g = pcall(u.getGroup, u)
+  if not (ok and g) then return end
+  local n = M.net.nodes[g:getName()]
+  if not (n and n.emcon) then return end
+  n.emcon.shots = n.emcon.shots or {}
+  n.emcon.shots[#n.emcon.shots + 1] = { weapon = e.weapon, t = M.now() }
 end
 
 local function apply(n, on, reason, now)
@@ -5233,8 +5324,16 @@ function E.tick()
         if now >= ready then apply(n, true, reason, now) end
       elseif not want and em.on then
         local forced = policy == "offline" or policy == "dark"
-        if forced or now >= em.onSince + n.net.doctrine.minOn then apply(n, false, reason, now) end
+        if not forced and missilesInFlight(n, now) then
+          if not em.holding then
+            em.holding = true
+            M.info("emcon", string_format("%s %s held up: own missiles in flight", n.net.key, n.name))
+          end
+        elseif forced or now >= em.onSince + n.net.doctrine.minOn then
+          apply(n, false, reason, now)
+        end
       end
+      if em.holding and (not em.on or want) then em.holding = nil end
       if em.on then em.emitSec = em.emitSec + 1 end
     end
   end
@@ -5265,6 +5364,7 @@ function E.start()
     if c then M.safe("emcon.alarm", c.setOption, c, O.id.ALARM_STATE, O.val.ALARM_STATE.RED) end
     M.net.dirty = true
   end
+  M.on(world.event.S_EVENT_SHOT, "emcon.shot", E.onShot)
   E.tick()
   M.every("emcon.tick", 1, E.tick, 1)
 end

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased - Phase 2 fixes from bench 01 (2026-09-27)
+- EW feed after command loss is now doctrine-driven (`c2LossCue`, DESIGN 8A): SOVIET_PVO_1985 / RUSSIA_MODERN /
+  NVA use a voice relay from a nearby EW radar (short range, long extra cue delay), NATO_COLDWAR / US_MODERN keep a
+  data-linked picture, GENERIC_THIRD_WORLD gets nothing. "Linked to command" and "under EW cover" are separate.
+- A site stays emitting while its own missiles fly at a live target (S_EVENT_SHOT bookkeeping, max 120 s).
+- POWER, COMMS and CMD nodes no longer log link-lost / autonomy messages; a command post is no longer listed as its
+  own parent; power plants are never reported as unlinked.
+- Harness: 111 network checks (was 60) incl. doctrine table pins; mutation check on the changed lines 117/117.
+- tests/bench/janus_bench_02.lua + JANUS_BENCH_02.miz: relay loss before CMD loss, voice and datalink feeds, a blue
+  US_MODERN network against unarmed Su-24M.
+
 ## 0.1.0-phase0 (2026-09-24)
 Foundation only; Janus does not control sites yet.
 - Unit database generated from the DCS Lua datamine (DCS 2.9.29) and DCS Olympus: 179 air-defence-relevant types,

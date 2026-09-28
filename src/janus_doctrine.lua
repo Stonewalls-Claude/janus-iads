@@ -22,6 +22,11 @@
 --                    switches instantly, so without this rule a site could dodge every ARM)
 --   restartByType    per DCS unit type overrides of restart
 --   minOn            once up, a radar stays up at least this long (stops flicker)
+--   c2LossCue        how early warning still reaches batteries that have lost their command post (DESIGN 8A):
+--                      mode  "datalink" (the picture keeps flowing, e.g. Link 16), "voice" (plots passed by
+--                            radio/telephone from a nearby EW radar), or "none" (only the battery's own radar)
+--                      range an EW radar within this distance of the battery (and seeing that far) can feed it
+--                      delay per crew tier: extra reaction time on top of cueDelay for a cue that comes this way
 
 JANUS = JANUS or {}
 local M = JANUS
@@ -39,6 +44,7 @@ local BASE = {
   rotating = { share = 0.5, period = 120 },
   restart = { LR = 10, MR = 8, SR = 5, NONE = 5 },
   restartByType = { ["RPC_5N62V"] = 25, ["SNR_75V"] = 10, ["snr s-125 tr"] = 10 },
+  c2LossCue = { mode = "voice", range = 40000, delay = TIER(60, 40, 30, 20) },
 }
 
 local function derive(base, changes)
@@ -70,6 +76,8 @@ M.Doctrines = {
     autonomyDelay = TIER(300, 180, 120, 60),
     autonomous = { BATTERY = "periodic", PD = "periodic" },
     periodic = { on = 15, off = 60 },
+    -- regimental CP gone: battalions fight on their own radar, radar companies still phone plots in
+    c2LossCue = { mode = "voice", range = 60000, delay = TIER(90, 60, 45, 30) },
   }),
   -- Faster autonomy, EW radars rotate to spread their exposure, point defence stays close to always-on.
   RUSSIA_MODERN = derive(BASE, {
@@ -79,12 +87,14 @@ M.Doctrines = {
     emcon = { EW = "rotating", PD = "cued" },
     rotating = { share = 0.5, period = 90 },
     periodic = { on = 20, off = 30 },
+    c2LossCue = { mode = "voice", range = 80000, delay = TIER(45, 30, 20, 15) },
   }),
   -- Delegated authority: batteries act on their own sooner; AWACS-led picture.
   NATO_COLDWAR = derive(BASE, {
     name = "NATO_COLDWAR",
     autonomyDelay = TIER(90, 60, 30, 20),
     autonomous = { BATTERY = "periodic", PD = "always" },
+    c2LossCue = { mode = "datalink", range = 150000, delay = TIER(15, 10, 6, 4) },
   }),
   -- Data-linked picture, fast reactions, point defence always up around protected assets.
   US_MODERN = derive(BASE, {
@@ -94,6 +104,8 @@ M.Doctrines = {
     emcon = { PD = "always" },
     autonomous = { BATTERY = "periodic", PD = "always" },
     periodic = { on = 30, off = 30 },
+    -- Link 16: the picture does not depend on one command post; engagement goes decentralized
+    c2LossCue = { mode = "datalink", range = 250000, delay = TIER(8, 5, 3, 2) },
   }),
   -- North Vietnam 1965-72: Fan Song emits for seconds only, sites cued by early warning, AAA always ready.
   NVA_VIETNAM_1965_72 = derive(BASE, {
@@ -101,6 +113,7 @@ M.Doctrines = {
     cueFactor = 1.0, cueHold = 15, minOn = 8,
     autonomyDelay = TIER(240, 150, 90, 60),
     periodic = { on = 10, off = 60 },
+    c2LossCue = { mode = "voice", range = 30000, delay = TIER(120, 90, 60, 45) },
   }),
   -- US Vietnam era: Hawk batteries defending airbases, simple procedural control.
   US_VIETNAM_1965_72 = derive(BASE, {
@@ -115,6 +128,7 @@ M.Doctrines = {
     autonomyDelay = TIER(400, 300, 200, 120),
     emcon = { BATTERY = "always", PD = "always" },
     autonomous = { BATTERY = "always", PD = "always" },
+    c2LossCue = { mode = "none" },         -- Iraq 1991: without the centre, sites are on their own
   }),
 }
 
