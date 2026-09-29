@@ -260,7 +260,7 @@ local function nearestTarget(s)
   end
   return best
 end
-local function status()
+local function status(_, t)
   safeCall("status", function()
     for _, s in ipairs(SITES) do
       local g = Group.getByName(s.name)
@@ -279,7 +279,7 @@ local function status()
       end
     end
   end)
-  return timer_getTime() + 30
+  return t + 30
 end
 timer_schedule(status, nil, timer_getTime() + 30)
 at(1500, "END: SA-2 probe complete at 25 min", function() end)

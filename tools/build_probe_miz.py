@@ -70,7 +70,7 @@ TRIGRULES = '''	["trigrules"] =
 
 
 def replace_block(src, key, new):
-    m = re.search(r'^\t\["%s"\] = \n\t\{\n' % key, src, re.M)
+    m = re.search(r'^\t\["%s"\] = ?\n\t\{\n' % key, src, re.M)  # a probe .miz built by this tool also works as a template
     if not m:
         raise SystemExit('no [%s] block in template mission' % key)
     depth, i = 0, m.end() - 2

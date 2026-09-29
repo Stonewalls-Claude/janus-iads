@@ -22,3 +22,9 @@ at a second point attacked by blue F-16 AGM-88):
 Build the .miz: `python3 tools/build_probe_miz.py --template <empty Syria .miz>` (the StonewallC IADS test .miz works as the template; only its theatre, date, weather and options are kept). The probe script spawns everything itself, so the .miz has no units.
 
 Exit gate for Phase 0: `docs/PROBE_RESULTS.md` exists with one row per weapon class.
+
+## Run 6 - Phase 2 pre-build probe (`JANUS_PROBE_P2.miz`)
+Level ladder (SAM launches vs slope), sensor identification (`type` flag), static command posts / radios / power.
+See `docs/PROBE_RESULTS.md` run 6. Rebuild: `python3 tools/build_probe_miz.py --template tests/probe/JANUS_PROBE_SA2.miz
+--out tests/probe/JANUS_PROBE_P2.miz --scripts tests/probe/janus_probe_p2.lua --title "JANUS PROBE P2"`. Run ~50 min.
+

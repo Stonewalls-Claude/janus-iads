@@ -1,4 +1,4 @@
-# Janus IADS — design (draft 0.7, 2026-09-25)
+# Janus IADS — design (draft 0.8, 2026-09-29)
 
 *Janus: the two-faced Roman god who looks both ways at once.*
 Janus runs integrated air defence networks for **both coalitions in the same mission**. It is one
@@ -19,15 +19,22 @@ standalone Lua file for DCS World, written from scratch.
 4. **Efficient.** Janus is driven by events and runs on a budgeted update loop, so running both
    coalitions costs well under twice as much as one.
 5. **Measurably better.** Before any claim is made, Janus must beat Skynet 3.5.0 across repeated
-   runs on the same test bench scenario.
+   runs on the same test bench scenario. Skynet is deprecated (owner, 2026-09-29), so this comparison is made
+   once, at the end (Phase 5 release gate), not during the build.
 6. **Easy for anyone, including people who don't code.** Install it with one trigger and no Lua.
    Name your groups, and it works. Every instruction is written for a mission maker who has never
    opened a script. See §5.
+7. **Standalone.** Janus loads and runs entirely on its own - no GCI, no StonewallC files, no Skynet, no MIST - so
+   it can be published to the community like Skynet. Without a GCI script a mission still gets the full IADS
+   (SAMs, EW, command posts, power, EMCON, HARM defence); AWACS is then just one more sensor in the picture.
+   `JANUS.gci` (4.10) is optional and read-only: Janus never checks whether anything reads it (agreed 2026-09-29).
 
 ## 2. Non-goals (v1)
-- Not a dynamic campaign, a spawner or a GCI voice system. It provides hooks for those instead.
-- Janus does not fly fighters. The optional **fighter hand-off** module only passes tracks and
-  commit requests to mission code or other scripts.
+- Not a dynamic campaign, a spawner or a GCI voice system. It provides hooks for those instead; for GCI it is the
+  radar and command network the GCI script runs on (4.10).
+- Janus does not fly or control fighters. It feeds GCI (4.10): picture, command nodes, SAM zones, commit requests;
+  the GCI script (StonewallC GCI 2.0, or any community GCI) decides and talks. Everything about fighters - voices,
+  SRS, commit logic - lives in the GCI script, never in Janus.
 - Janus does not fake physics. Every shot is fired by DCS's own AI. Janus decides *who* emits and
   engages, *when* and *what at*.
 
@@ -83,6 +90,32 @@ groups never engaged. So a Janus *battery* is always one DCS group, and network 
 group's emissions and ROE (who emits, who may fire), never by lending one group's radar to another group's launchers.
 The setup report already flags launcher-only groups as "will never fire".
 
+### 4.1A Static command posts, radios and power (agreed 2026-09-29; Phase 2, seat parts Phase 2.5)
+Command posts, radios and power plants are usually buildings, so Janus reads **DCS static objects** as network nodes,
+not only ground-unit groups. A static named with a role word (`CMD North`, `COMMS North`, `POWER North`) becomes a
+node with the same tags as a group. Groups still work (mobile command posts on trucks). Statics have no AI, so they
+cost the server almost nothing.
+
+What losing each one does:
+| Node | If it is destroyed |
+|---|---|
+| **Command post** (`CMD`) | Its GCI seats are gone (4.10). Its radars and SAMs lose their command link and go autonomous per doctrine, as today. If the doctrine names an alternate command post, it takes over after the doctrine delay and the seats move there |
+| **Link radio / relay** (`COMMS`) | Connects the command post to its radars and SAM sites. Sites behind it lose their link (as today); the command post falls back to a backup channel: slower cues and shorter range, set per doctrine |
+| **Air-ground radio** (`COMMS ... [ag]`) | Lets the command post's GCI seats talk to fighters. Seats stay alive but drop to the doctrine's backup radio (short range, slow delivery); with no backup they see the picture but cannot talk to fighters |
+| **Power** (`POWER`) | As today: the node it feeds goes on its timed reserve, then drops |
+
+Degraded, not dead: only the command post itself kills seats; losing radios or power degrades them.
+
+**Alternate command post** (doctrine field, e.g. `alternateCP = { delay = TIER(...), authority = ... }`, and tag
+`[alt:North 2]` on the main post): real networks kept backup posts. Soviet/Russian: long takeover delay, reduced
+authority; NATO/US: short delay. No alternate named -> no takeover.
+
+To check in DCS before building (a short night probe):
+- exact static type names for bunkers, command centres, comms towers and generators (from the unit database, as in
+  Phase 0);
+- whether DCS reliably fires `S_EVENT_DEAD` for statics. If not, Janus checks the few statics (`isExist` /
+  `getLife`) on its existing 1-s pass.
+
 ### 4.2 Track picture
 - **Sensor polling** goes through `Controller:getDetectedTargets()` on emitting sensors. It is
   **budgeted and round-robin**: N sensors per tick, with results cached per tick. Each coalition's
@@ -91,6 +124,13 @@ The setup report already flags launcher-only groups as "will never fire".
   classification (fixed-wing / helicopter / missile / unknown) and the sensors that hold it.
 - **Classification:** Janus uses the DCS category of the detected object where DCS reports it. Its
   own kinematic rules only fill gaps; Janus never waits minutes to decide.
+- **Identification (agreed 2026-09-29):** a track's exact aircraft type is known only when DCS says the detecting
+  sensor knows it: `getDetectedTargets()` returns a `type` flag per detection (DCS's own model of NCTR / ESM /
+  visual ID). Once any sensor holding the track reports `type = true`, the track carries its DCS type name from
+  then on (until the track is dropped). Until then it has only its class. Doctrine can add an ID delay by crew tier.
+  To probe: which DCS sensors (EW radars, SAM radars, AWACS) ever report `type = true`, and at what range - if EW
+  radars never do, the fallback is a doctrine rule (e.g. identify after N s of continuous track by a linked
+  command node), recorded in `docs/PROBE_RESULTS.md` before Phase 2 builds on it.
 
 ### 4.3 Threat evaluation and weapon-target assignment (WTA)
 - **Threat score:** time-to-weapons-release against defended assets, closure, altitude and type.
@@ -268,6 +308,113 @@ salvo/layering rules, ROE and identification rules (blue: weapons tight, IFF), a
 - **Stats:** per-site emitting time, shots, kills and losses in the log, the same metrics the test
   bench uses.
 
+### 4.10 Ground control (GCI) interface (agreed 2026-09-29; core in Phase 2.5, rest in Phase 4)
+Janus never flies or vectors fighters. StonewallC GCI 2.0 already controls red and blue AI fighters (AEW seats,
+ground posts, SRS voices) and builds its picture from Skynet's EW radars (or "EW ..." groups). Janus replaces that
+source and becomes the network GCI runs on, through one read-only table `JANUS.gci`.
+
+**One command hierarchy, not two (agreed 2026-09-29).**
+- Janus owns the command posts and the air picture. GCI controller seats sit *inside* Janus command nodes and consume
+  that picture; they never build a second one. With Janus running, GCI does not read DCS radars itself; its
+  "EW ..." fallback is only for missions without Janus.
+- SAM orders stay inside Janus and never touch the radio (the voice/datalink delays of `c2LossCue` are timings,
+  not SRS traffic). Fighter orders go out only through GCI.
+- **The picture is shared, authority flows down.** Every sensor, AWACS included, feeds one picture (with the
+  doctrine's link delay); anything linked to it sees the same tracks. There is no round trip: AWACS does not send its
+  picture down to the command post to have orders sent back up. What runs top-down is *authority* - which node
+  controls which fighters, the SAM and fighter zones, and SAM weapons control. It is published as state that GCI
+  reads when it needs it, never as messages, so it costs the server nothing extra.
+- **Command node kinds:** ground command post (CRC / PVO regimental CP), naval command node (carrier CIC, flagship),
+  and **airborne command node** (A-50, E-3, E-2). An AWACS is both a sensor feeding the picture and a command node
+  whose parent is a ground or naval command post. Janus does not fly it; it only reads its radar and tracks whether
+  it is alive and linked.
+- **Seats are bound to a node.** Every GCI seat names the Janus command node it sits in (name tag or GCI config).
+  Node destroyed -> its seats are gone (or move to the alternate command post, 4.1A). Node unpowered -> seats silent
+  until power returns. Node cut off from the picture -> its seats keep talking on a stale or thinner picture with the
+  doctrine's delays. Air-ground radio lost -> seats drop to the backup radio (4.1A); `commandNodes` reports it.
+- **Airspace authority belongs to the command post.** SAM-only / fighter-only / joint zones and SAM weapons control
+  are command-node decisions: Janus owns and publishes them; GCI and Janus's own batteries both obey them.
+- **Doctrine sets delegation** (new profile field, Phase 2.5):
+
+  | | NATO / US | Soviet / Russian |
+  |---|---|---|
+  | AWACS radar | Datalinked to the network (Link 11/16); the CRC sees it within seconds | Datalinked to ground command posts |
+  | Who talks to fighters | AWACS controllers, under authority delegated by the CRC | Mostly ground command posts; A-50 is chiefly a flying radar, its controllers a backup |
+  | Parent CP lost | AWACS takes over as senior controller | A-50 controllers carry on, slower and with less authority |
+
+- **Parked (not Phase 2.5):** fighters' own radar tracks (Link 16) feeding back into the Janus picture; SRS
+  channels for Soviet/Russian ground-post controllers (a StonewallC standard update, GCI side).
+
+**How GCI connects: GCI pulls, Janus never calls GCI (agreed 2026-09-29).**
+- Janus never references GCI or any other consumer. There is no `GCI.setGroundSource` or other registration from
+  Janus's side; that push model (GCI 2.13.0, `docs/requests/GCI_GROUND_CONTROL.md`) is replaced.
+- GCI looks up `JANUS.gci` itself on each tick. It checks `JANUS.gci.version` (an integer interface version, bumped
+  on any breaking change; Phase 2.5 ships version 1) and uses Janus only if it knows that version.
+- GCI wraps every call into `JANUS.gci` in `pcall`. Janus missing, an unknown version or an error -> GCI warns once
+  and runs in its own mode (its "EW ..." scan and flat ground post). A Janus bug never takes the fighters down.
+- **Events, same tick:** GCI may subscribe with `JANUS.gci.on(event, fn, key)` (`nodeLost`, `nodeRestored`,
+  `nodeDegraded`, `authorityChanged`), each carrying node name, kind, coalition and new state. It is still GCI calling
+  Janus: Janus keeps an anonymous callback list, calls each one through `M.safe`, and never knows who is on it.
+  - **No pile-up on hot reload:** `key` is any string the subscriber picks; subscribing again with the same event and
+    key *replaces* the old callback instead of adding a second one. `on` also returns a handle, and
+    `JANUS.gci.off(handle)` removes it. A subscriber that reloads can never make events fire twice.
+  - **Janus reload:** `JANUS.gci.instance` is a number that changes every time Janus starts. A subscriber that sees
+    it change signs up again (Janus's old callback list went with the old instance).
+  - Events only make GCI react sooner. GCI still re-reads `commandNodes` every tick, so a missed event does no harm.
+- **One picture, one radar list.** With Janus usable, GCI must not build its own picture (no true-position checks
+  of enemy aircraft against radar range) and must not add DCS AWACS aircraft on its own: `radarHeads` and `tracks`
+  already include every AWACS the network owns, so adding them again would count them twice.
+- **Doctrine comes from Janus.** `commandNodes` carries the doctrine's delegation (`fighterControl` = `"ground"` or
+  `"aew"`, AWACS takeover rule, alternate CP); with Janus usable it replaces GCI's own `handoffMode` setting.
+- **Interface test (Janus side, Phase 2.5):** `tests/test_gci_api.lua` pins the `JANUS.gci` contract offline - the
+  version, each function's output shape, empty results with no network, no error with Janus half-started, callbacks
+  that throw, re-subscribing with the same key fires once, `off` works, `instance` changes on restart, and that nothing in `src/` names GCI. It includes a small reference consumer written the way GCI must
+  be (pull, version check, `pcall`, fallback). The old fake-link test in dcs-missions is retired when GCI 2.14.0
+  moves onto `JANUS.gci`.
+
+Real-world basis:
+- NATO/US: airspace split into MEZ (SAMs), FEZ (fighters) and JEZ (both, needs good ID); a control centre
+  (CRC/TAOC) directs interceptors and sets weapons control status; centralized control = SAMs ask before firing,
+  decentralized = own ROE (USMC MCWP 3-22 ch. 3; JP 3-52).
+- Soviet PVO: close ground control; the same command post owns fighters and SAMs and picks the weapon per target;
+  Lazur datalink sent heading/altitude/speed and could switch the fighter's radar on (RUSI 2019; ED forum).
+- North Vietnam: controllers placed MiGs in ambush stations for one fast pass (MiG-17 head-on, MiG-21 from the
+  rear), built around the SA-2 belts.
+
+`JANUS.gci` (per coalition; every function returns cached tables built on Janus's own timers, so calling it every
+GCI tick is cheap):
+- **version** - interface version (integer, 1 in Phase 2.5).
+- **on(event, fn, key)** / **off(handle)** - optional event subscription (above); **instance** - changes each Janus
+  start.
+- **tracks(coal)** - the coalition's fused air picture (4.2): the tracks Janus already holds, never true positions.
+  Each track: id, position, altitude, velocity, classification, time last seen, and the radars/command nodes that
+  hold it, plus **identification**: `typeName` (the DCS type, e.g. `F-14B`) and `typeKnown = true` only once a sensor
+  holding the track has identified it (below); otherwise `typeName = nil` and only the class (fixed-wing /
+  helicopter / missile) is given, and a consumer assumes the worst case for that class. GCI needs the type for its
+  threat logic (missile reach, "outranged", "hot on us"); Janus's own WTA uses it for kill probability. A seat sees the picture its command node sees (with the doctrine's link delay, stale when cut off). This
+  is what lets GCI drop its own picture.
+0. **commandNodes(coal)** - every command node (ground, naval, airborne) with position, kind, parent, alive /
+   powered / linked state and delegated authority from the doctrine. GCI binds each seat to one of these.
+1. **radarHeads(coal)** - working, powered, emitting EW radars (and AWACS nodes) with position and usable range, in
+   the shape GCI's `radarHeads` already uses. Losing command posts, relays or power degrades GCI exactly as it
+   degrades the SAMs.
+2. **controlState(coal, point)** - whether a ground controller can reach that area, from the doctrine: Soviet/Russian
+   needs a linked command post (lost C2 = fighters on their own radars); US/NATO keeps the datalink picture
+   (`c2LossCue` datalink); Vietnam voice-only, short range. GCI uses it to decide which ground seats exist.
+3. **samZones(coal)** - live engagement zones of the coalition's *emitting, working* batteries (real reach, not
+   static rings). GCI keeps friendly fighters out of friendly MEZs (doctrine: FEZ/MEZ separation) as well as
+   enemy ones; an enemy site that has gone dark or died drops out of the enemy zones.
+4. **commitRequests(coal)** - tracks the SAM network will not engage (outside every zone, below coverage, leakers,
+   or deliberately left to fighters by doctrine) as hand-off requests; GCI decides whether to vector a flight.
+   This is the old "fighter hand-off" module.
+5. **Weapons control** - doctrine sets weapons free / tight for batteries near friendly fighters (JEZ vs MEZ);
+   DCS's own ID never shoots friendlies, so this is about realism and fighter-or-SAM choice, not safety.
+
+Cost: all of it reuses the Phase 1-2 picture and the 1-s coverage pass; GCI polls it on its own tick. Both sides
+stand alone: Janus runs without any GCI (goal 7), and GCI 2.0 keeps working without Janus (falls back to its own
+"EW ..." groups). Load order when both are used: Janus first, then GCI (STANDARDS.md to be updated when Skynet is
+removed).
+
 ## 4.8A Unit data sources
 Janus's unit data is **generated at build time** from two sources and shipped inside `janus.lua`,
 so users install nothing extra:
@@ -380,7 +527,10 @@ COMMS Relay 1         POWER Plant 2   SHIP CG Leyte Gulf  AWACS Overlord
 ```
 - **Optional tags** in brackets set explicit links or settings: `[net:North]`, `[cmd:Damascus]`,
   `[relay:Relay 1]`, `[power:Plant 2]`, `[protects:SAM SA-10 Hama]`, `[skill:VET]` (or just `VET` in the name),
-  `[emcon:dark]` (`always`, `dark`, `cued`, `periodic`, `rotating`).
+  `[emcon:dark]` (`always`, `dark`, `cued`, `periodic`, `rotating`), `[ag]` (a `COMMS` air-ground radio, 4.1A),
+  `[alt:Damascus 2]` (alternate command post, 4.1A).
+- **Static objects** use the same names: a bunker named `CMD Damascus`, a comms tower `COMMS Relay 1` or
+  `COMMS Damascus [ag]`, a generator `POWER Plant 2` (4.1A).
 - Mission makers who already follow Skynet's `SAM`/`EW` naming need no renaming.
 
 ### 5.2 Lua (optional; for scripters)
@@ -404,9 +554,11 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 1. **Lint:** dcs-check, Lua 5.1, sanitized, zero errors.
 2. **Offline harness:** a fake DCS built from real unit data. It covers links, autonomy, EMCON,
    WTA, the launch-detection gate and every doctrine profile, with a regression test for every bug.
-3. **Server test bench** (the Skynet/Medusa bench, extended):
-   - Red: Janus `SOVIET_PVO_1985` vs Skynet 3.5.0 on the same scenario, repeated runs. Janus must
-     win on combined score (blue losses, red losses, emitting time, HARMs defeated).
+3. **Server test bench** (Janus benches during the build; the Skynet/Medusa comparison at the end):
+   - Red: Janus `SOVIET_PVO_1985` vs Skynet 3.5.0 on the same scenario, repeated runs, **once, as the
+     Phase 5 release gate**. Janus must win on combined score (blue losses, red losses, emitting time,
+     HARMs defeated).
+   - Every bench places each SAM on flat ground (probe runs 4-5: sloped Hawks and SA-2s never fire).
    - Blue: Patriot/Hawk/C-RAM/Avenger network against red strikes with Kh-58/Kh-31P and cruise
      missiles.
    - Both sides at once: performance and correctness.
@@ -423,8 +575,9 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
   naval), changelog, semantic versioning, an issue template.
 - **Licence: the user decides.** MIT is permissive and gets the widest use. GPL-3.0 requires
   modifications to stay open, like Skynet.
-- It stays in the StonewallC standard as the IADS **only after** it wins on the bench. Skynet
-  remains the standard until then.
+- Skynet is deprecated (owner, 2026-09-29, too many issues); Janus is meant to replace it in the StonewallC
+  standard. STANDARDS.md still names Skynet (load order, GCI picture fallback) and is updated when Janus
+  takes over; the final Janus-vs-Skynet bench (Phase 5) records the comparison.
 
 ### 8A. Phase 2 fix list (from bench 01, agreed 2026-09-27) - items 1-5 built 2026-09-27; bench 02 (2026-09-28, `docs/BENCH_RESULTS.md`) confirmed 1-3 and 5 in DCS, item 4 proven offline only; open: blue Hawks never fired
 1. **EW cover after C2 loss is doctrine-driven** (`c2LossCue = { mode, range, delay[tier] }` per profile), keeping
@@ -459,10 +612,11 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 | 0 | Unit data generated from the DCS datamine + Olympus databases; battery preset data with sources; project skeleton, build, harness; C-RAM/AI engagement probe mission | **Done 2026-09-24.** Probe run 1 (`docs/PROBE_RESULTS.md`): C-RAM never engages weapons in DCS (aircraft only); Kh-31P flight 102 s, unopposed |
 | 0.5 | Probe runs 2 (JANUS_PROBE_V2.miz) and 3 (JANUS_PROBE_V3.miz): ARM defence, weapon tracking, EMCON timing, cross-group cueing, ARM memory, janus.lua smoke test | **Done 2026-09-25** (`docs/PROBE_RESULTS.md`): Tor/Pantsir shoot HARMs 9-13 s after launch; EW radars hold ARMs at 100+ km within 2 s (filter needed); `enableEmission` is instant, ALARM warm-up 5-55 s; launchers need a radar in their own group; Shrike and HARM both miss once the radar goes dark; janus.lua runs clean in DCS. Open, not blocking: Patriot vs red ARMs (red AI never launched), SA-2/SA-5 radar state without a target |
 | 1 | Network model, links, C2/comms/power, EW, batteries, autonomy, EMCON | Harness green; red network runs on the bench. **Done 2026-09-27** (`docs/BENCH_RESULTS.md`): bench 01 ran with no Janus errors; cueing, power reserve, C2 loss, 180 s autonomy, periodic EMCON, own-track hold and restart times all behaved as designed. To fix: POWER/COMMS link and autonomy log noise, C2 listed as its own parent, relay-loss path untested (bench ordering). Open: should EW cue batteries directly after C2 loss? A HARM hit an SA-6 radar 39 s after it went dark (feeds Phase 3) |
-| 2 | Track picture, WTA with kill probability, handoffs | Beats Skynet on the bench, excluding HARM effects |
-| 3 | Launch detection and HARM defence ladder, point defence, C-RAM | Beats Skynet on the full bench, repeated runs |
-| 4 | Blue doctrine, naval, AWACS, AAA, Vietnam profiles, battery-preset spawning, both coalitions at once | Blue and Vietnam benches plus dual-side performance targets met |
-| 5 | Optional modules, non-coder docs (quick start, tutorial, recipes, troubleshooting), demo missions, public 1.0 | A non-coder builds a working IADS from the quick start alone (the project owner, as the test user) |
+| 2 | Track picture, WTA with kill probability, handoffs; static command posts, radios and power as network nodes, link-radio backup channel, alternate command post (4.1A) | Static nodes degrade the network as designed; track picture, WTA and handoffs work on a Janus bench with no Janus errors (no Skynet comparison during the build; see Phase 5) |
+| 2.5 | **GCI feed core** (4.10, agreed 2026-09-29): one command hierarchy - `JANUS.gci.commandNodes` (ground, naval and airborne command nodes, AWACS as a sensor + command node, doctrine delegation field, seat binding, air-ground radio and its backup, seats moving to the alternate command post; 4.1A), `radarHeads`, `controlState`, `samZones`, `tracks` (with identification), `version`, `instance`, `on()`/`off()`, interface test; so StonewallC GCI 2.0 can be built on Janus instead of Skynet | `tests/test_gci_api.lua` green; GCI 2.0 runs on the Janus picture (`tracks`, `radarHeads`, no picture of its own) on a bench: its seats sit in Janus command nodes and fall silent when their node dies, follow Janus EW/C2 losses per doctrine, and fighters keep out of live SAM zones; the same bench runs clean with no GCI loaded |
+| 3 | Launch detection and HARM defence ladder, point defence, C-RAM | HARM defence works on the full bench, repeated runs |
+| 4 | Blue doctrine, naval, AWACS, AAA, Vietnam profiles, battery-preset spawning (flat ground only), both coalitions at once, rest of `JANUS.gci` (commitRequests, weapons control; 4.10) | Blue and Vietnam benches plus dual-side performance targets met; GCI 2.0 runs on the Janus picture and loses control when Janus loses C2/EW |
+| 5 | Optional modules, non-coder docs (quick start, tutorial, recipes, troubleshooting), demo missions, public 1.0 | A non-coder builds a working IADS from the quick start alone (the project owner, as the test user); **Janus beats Skynet 3.5.0 on the same bench, repeated runs** (the one comparison, recorded for the release) |
 
 ## 10. Decisions
 1. Licence: **GPL-3.0** (decided 2026-09-23).
@@ -479,3 +633,14 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 8. ARM defence covers every anti-radiation weapon (Shrike through Kh-31P), identified by passive-radar guidance.
    Crews react to what they could plausibly notice (4.5A), never to the weapon object itself; dark time follows 4.5B;
    ARM success is scored as suppression (emitting time lost), not only kills (decided 2026-09-24).
+9. One command hierarchy (4.10): Janus owns command posts, AWACS command nodes and the one air picture; GCI seats sit
+   inside Janus command nodes; SAM orders stay in Janus, fighter orders go only through GCI; authority flows down as
+   state, the picture is shared (decided 2026-09-29).
+10. Janus is standalone and publishable on its own; `JANUS.gci` is an optional read-only interface any GCI script may
+    use (decided 2026-09-29). GCI pulls: it looks up `JANUS.gci`, checks `version`, calls through `pcall` and falls
+    back to its own mode; Janus never calls or names GCI. `JANUS.gci.tracks` shares the fused picture, so GCI builds
+    none of its own (decided 2026-09-29).
+11. Command posts, radios and power can be static objects (4.1A). Command post lost = its seats lost; radios and
+    power lost = degradation. Two radios: link radio (`COMMS`, command post to sites) and air-ground radio
+    (`COMMS [ag]`, seats to fighters), each with a doctrine backup; alternate command posts are a doctrine field
+    (decided 2026-09-29).

@@ -3,9 +3,44 @@
 **From:** the owner, via the StonewallC mission / GCI session, 2026-09-29.
 **For:** the Janus session. Read this with `docs/DESIGN.md` §4.1 (network model), §4.6 (degradation) and §4.8
 (fighter hand-off module).
-**Status:** requirements, agreed with the owner. Nothing here is built in Janus yet. The owner has chosen to
-**wait for Janus** instead of adding a stop-gap to the GCI, and wants Janus's priority raised so red is fleshed
-out properly.
+**Status (updated 2026-09-29 by the Janus session): answered - build from `docs/DESIGN.md` §4.1A and §4.10, not
+from sections 3.1-3.4 below.** The needs in this request all stand; the *mechanism* changed. The original text is
+kept below as history. Nothing is built in Janus yet (Phase 2.5, after Phase 2).
+
+## 0. Janus reply (2026-09-29, agreed with the owner)
+
+**The link runs the other way.** `GCI.setGroundSource(fn)` would make Janus hand GCI a function, so Janus would
+have to know GCI exists. That breaks Janus's standalone rule (DESIGN goal 7). Instead, GCI **pulls**:
+- GCI looks up `JANUS.gci` itself each tick and checks `JANUS.gci.version` (integer; 1 in Phase 2.5).
+- Every call goes through `pcall`. Janus missing, an unknown version or an error -> GCI warns once and runs in its
+  current mode (`EW …` scan and flat ground post). This keeps the error handling GCI 2.13.0 already has.
+- Janus never names GCI; `tests/test_gci_api.lua` checks that nothing in Janus's `src/` does.
+
+**One command hierarchy (DESIGN §4.10).** Janus owns the command posts (ground, naval and AWACS) and the one air
+picture; GCI's controller seats sit inside Janus command nodes. SAM orders stay in Janus; fighter orders go only
+through GCI. Command posts, relays and power can be static objects (DESIGN §4.1A); destroying a post removes its
+seats, destroying a radio or power degrades them.
+
+Where each request now lives:
+| This request | Answered by (DESIGN) | Change for GCI |
+|---|---|---|
+| 3.1 ground radar picture via `setGroundSource` | `JANUS.gci.radarHeads(coal)` (§4.10), same list format (`x, y, z, name, r2`) | Pull it; retire `setGroundSource` |
+| (new) the picture itself | `JANUS.gci.tracks(coal)` - Janus's fused tracks, never true positions; each carries `typeName` + `typeKnown` once a sensor has identified it (DCS detection `type` flag, DESIGN §4.2), otherwise class only | GCI stops building its own picture; uses the type for missile reach / "outranged" / "hot on us", worst case for the class when `typeKnown` is false |
+| (new) AWACS | Included in `radarHeads` / `tracks` / `commandNodes` as an airborne command node | GCI must not add DCS AWACS on its own (double count) |
+| 3.2 intercept posts, seats, state | `JANUS.gci.commandNodes(coal)`: kind, parent, alive / powered / linked, air-ground radio state, alternate CP, delegation. Seat counts stay GCI-side (seats are GCI's; a `[seats:n]` tag on the post is read by GCI) | GCI binds each seat to a node; replaces the one flat post per side |
+| 3.2 statics | §4.1A, Phase 2; death detection probed first | - |
+| 3.3 push callbacks | `JANUS.gci.on(event, fn, key)` / `off(handle)`: `nodeLost`, `nodeRestored`, `nodeDegraded`, `authorityChanged`; same key replaces, so hot reloads never pile up; `JANUS.gci.instance` changes when Janus restarts | GCI subscribes one fixed callback per Janus instance under its own key, re-subscribes when `instance` changes, and still re-reads `commandNodes` every tick (events only speed things up) |
+| 3.4 doctrine hint | `fighterControl` (`"ground"` / `"aew"`) plus AWACS takeover rule in `commandNodes` | Replaces `cfg.handoffMode` when Janus is usable; "CRC dies, AWACS takes over" vs "A-50 carries on, slower" comes from Janus |
+| (new) friendly SAM zones | `JANUS.gci.samZones(coal)` for *both* sides | GCI keeps fighters out of friendly MEZs as well as enemy rings |
+| 3.5 scramble requests | `JANUS.gci.commitRequests(coal)`, Phase 4 | - |
+| (new) interface test | `tests/test_gci_api.lua` in Janus, with a reference consumer | The dcs-missions fake-link test (`harness_gci_handoff.lua` J) is retired with GCI 2.14.0 |
+| Parked | SRS channels for Soviet/Russian ground-post controllers | StonewallC standard update, GCI side |
+
+Acceptance (section 5) stands, with two additions: GCI builds no picture of its own while Janus is usable, and the
+same bench runs clean with no GCI loaded. GCI 2.14.0 (the GCI session's work list) starts after Janus Phase 2.5
+lands.
+
+---
 
 ## 1. Why this came up
 

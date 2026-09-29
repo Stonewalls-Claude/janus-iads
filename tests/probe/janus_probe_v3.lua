@@ -67,9 +67,9 @@ end
 
 -- every N seconds, returns the next time (for timer.scheduleFunction)
 local function every(tag, interval, first, fn)
-  timer_schedule(function()
+  timer_schedule(function(_, t)
     safeCall(tag, fn)
-    return timer_getTime() + interval
+    return t + interval
   end, nil, timer_getTime() + first)
 end
 local function at(t, tag, fn)
@@ -321,11 +321,11 @@ end)
 -- ------------------------------------------------------------------ A: EMCON sequence + monitor
 local OBS = "Observer RWR Probe"
 local STEPS = {
-  { 0,   "ALARM RED",       function(g, n) groundOptions(n, RED_ALARM, nil) end },
+  { 0,   "ALARM RED",       function(_, n) groundOptions(n, RED_ALARM, nil) end },
   { 60,  "EMISSION OFF",    function(g) g:enableEmission(false) end },
   { 120, "EMISSION ON",     function(g) g:enableEmission(true) end },
-  { 180, "ALARM GREEN",     function(g, n) groundOptions(n, GREEN_ALARM, nil) end },
-  { 240, "ALARM RED again", function(g, n) groundOptions(n, RED_ALARM, nil) end },
+  { 180, "ALARM GREEN",     function(_, n) groundOptions(n, GREEN_ALARM, nil) end },
+  { 240, "ALARM RED again", function(_, n) groundOptions(n, RED_ALARM, nil) end },
 }
 local EMCON_START, STAGGER = 90, 15
 P.emcon = {}

@@ -112,7 +112,7 @@ handler.onEvent = wrapHandler(function(_, e)
 end)
 world.addEventHandler(handler)
 
-local function summary()
+local function summary(_, t)
   safeCall("summary", function()
     local parts = {}
     for shooter, s in pairs(P.stats) do
@@ -121,7 +121,7 @@ local function summary()
     table.sort(parts)
     log("SUMMARY trackedWeapons=" .. tostring(P.trackedWeapons) .. " | " .. table.concat(parts, " | "))
   end)
-  return timer_getTime() + 60
+  return t + 60
 end
 timer_schedule(summary, nil, timer_getTime() + 60)
 
@@ -227,7 +227,7 @@ ground(RED, "Target Trucks R1", R1.x, R1.z, { { "Ural-375", 40, 0 }, { "Ural-375
 local DEFENDERS = { "SAM Patriot Probe", "PD C-RAM Probe", "PD Avenger Probe", "PD Tor Probe", "PD Pantsir Probe", "EW Bait R1" }
 local seenWeapon = {}
 P.trackedWeapons = 0
-local function sweep()
+local function sweep(_, t)
   safeCall("sweep", function()
     for i = 1, #DEFENDERS do
       local g = Group.getByName(DEFENDERS[i])
@@ -252,7 +252,7 @@ local function sweep()
       end
     end
   end)
-  return timer_getTime() + 5
+  return t + 5
 end
 timer_schedule(sweep, nil, timer_getTime() + 10)
 

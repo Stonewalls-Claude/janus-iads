@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased - Phase 2 fixes from bench 01 (2026-09-27)
+- Probe run 6 built (`tests/probe/JANUS_PROBE_P2.miz`, not run yet): level ladder for SAM launches on sloped
+  ground, sensor identification (`type` flag), static command posts / radios / power and their death events.
+- Probe scripts follow the new dcs-check drift rule (reschedule from the callback's time, not the clock);
+  `tools/build_probe_miz.py` accepts a probe .miz as its template.
 - EW feed after command loss is now doctrine-driven (`c2LossCue`, DESIGN 8A): SOVIET_PVO_1985 / RUSSIA_MODERN /
   NVA use a voice relay from a nearby EW radar (short range, long extra cue delay), NATO_COLDWAR / US_MODERN keep a
   data-linked picture, GENERIC_THIRD_WORLD gets nothing. "Linked to command" and "under EW cover" are separate.

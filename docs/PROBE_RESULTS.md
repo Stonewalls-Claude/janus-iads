@@ -249,3 +249,21 @@ Seven sites, each overflown from the north by 2 unarmed Su-24M at 20,000 ft. Log
 so the setup report flags a sloped SA-2. Future battery spawning must pick flat ground for every SAM, and the
 benches should place all SAMs with the flat-ground finder. Open: the exact SA-2 threshold, and whether other
 systems (SA-3, SA-6, SA-10...) have the same limit.
+
+## Run 6 - Phase 2 pre-build probe (built 2026-09-29, `JANUS_PROBE_P2.miz`) - NOT RUN YET
+One night mission, plain DCS (no janus.lua), about 50 min. Script `tests/probe/janus_probe_p2.lua`; offline smoke run
+against a DCS stub is clean. Answers every DCS question Phase 2 depends on:
+- **A. Level ladder (missile launches vs ground slope).** 14 sites whose every unit sits inside a slope band; one site
+  weapons free at a time (190 s window) while 2 unarmed Su-24M at 15,000 ft pass overhead; `WINDOW END ... FIRES/MUTE`.
+  SA-2 and Hawk at 2.5-3.5 and 4.5-6.5 deg (between the known 1.6 fires / 11 mute); SA-3, SA-6, SA-11, SA-10,
+  Patriot at 3-5 and >= 10 deg. Sets `M.SLOPE_LIMITS` for every system. A `BAND-MISS` spawn line means the terrain
+  search found no spot fully inside the band (its real slopes are logged).
+- **B. Identification.** Which sensors report the detection `type` flag, from what range: `DET` lines per
+  (sensor, target) when first held and on every flag change. Blue EW cluster (FPS-117, 55G6, 1L13, P-19), blue E-3A,
+  red A-50, and the 14 ladder SAM radars; targets Su-27, MiG-29A, MiG-31, Tu-22M3 (red) and F-16C, F-15C (blue).
+- **C. Statics.** 8 static command posts / radios / generators (`.Command Center`, `Bunker 1`, `Military staff`,
+  `Shelter`, `Comms tower M`, `TV tower`, `GeneratorF`, `Electric power box`) + 2 command vehicles (Ural-375 PBU,
+  SKP-11) as controls: static API listing, then explosions of 20-3000 kg until each dies; every event naming them
+  (`EVENT` lines) vs a 2 s isExist/getLife poll (`POLL` lines). Limitation: statics are script-spawned, not placed in
+  the Mission Editor.
+
