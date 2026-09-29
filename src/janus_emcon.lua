@@ -36,7 +36,14 @@ function E.policyFor(n)
     -- a battery that still gets early warning (through the network, or by c2LossCue after losing command)
     -- keeps its linked EMCON policy; without it the crew falls back to searching on its own radar
     if n.covered then return d.emcon[n.kind] or "cued" end  -- mutate: ok fallback only for a custom table missing a kind
-    return d.autonomous[n.kind] or "periodic"
+    local p = d.autonomous[n.kind] or "periodic"             -- mutate: ok fallback only for a custom table missing a kind
+    if p == "periodic" and d.periodicByType then   -- mutate: ok today every override is "always", which a non-periodic policy never needs
+      for _, u in ipairs(n.site.units) do
+        local alt = d.periodicByType[u.rec.type]
+        if alt then return alt end
+      end
+    end
+    return p
   end
   if n.autonomous then return d.autonomous[n.kind] or "always" end  -- mutate: ok fallback only for a custom table missing a kind
   return d.emcon[n.kind] or "always"

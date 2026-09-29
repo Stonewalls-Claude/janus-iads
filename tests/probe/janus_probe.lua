@@ -71,8 +71,15 @@ local function bump(k, field)
   r[field] = r[field] + 1
 end
 
+-- every DCS event handler is wrapped (house rule); safeCall inside keeps the per-event tag
+local function wrapHandler(fn)
+  return function(...)
+    local args, n = { ... }, select("#", ...)
+    safeCall("handler", function() return fn(unpack(args, 1, n)) end)
+  end
+end
 local handler = {}
-function handler:onEvent(e)
+handler.onEvent = wrapHandler(function(_, e)
   safeCall("event", function()
     if e.id == world.event.S_EVENT_SHOT then
       local w = e.weapon
@@ -102,7 +109,7 @@ function handler:onEvent(e)
       log(string_format("BIRTH %s (%s)", safeName(e.initiator), safeType(e.initiator)))
     end
   end)
-end
+end)
 world.addEventHandler(handler)
 
 local function summary()

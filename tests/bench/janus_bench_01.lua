@@ -178,8 +178,15 @@ at(420, "kill CMD North", function() destroyGroup("CMD North") end)
 at(900, "kill COMMS Relay West", function() destroyGroup("COMMS Relay West") end)
 
 -- ------------------------------------------------------------------ recording
+-- every DCS event handler is wrapped (house rule); safeCall inside keeps the per-event tag
+local function wrapHandler(fn)
+  return function(...)
+    local args, n = { ... }, select("#", ...)
+    safeCall("handler", function() return fn(unpack(args, 1, n)) end)
+  end
+end
 local handler = {}
-function handler:onEvent(e)
+handler.onEvent = wrapHandler(function(_, e)
   safeCall("event", function()
     if e.id == world.event.S_EVENT_SHOT then
       local w = e.weapon
@@ -191,7 +198,7 @@ function handler:onEvent(e)
       log(string_format("DEAD %s (%s)", safeName(e.initiator), safeType(e.initiator)))
     end
   end)
-end
+end)
 world.addEventHandler(handler)
 
 -- every 60 s: Janus node states and emitting seconds (read-only use of the shared namespace)

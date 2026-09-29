@@ -58,17 +58,43 @@ local function checkDependencies(site)
   return problems
 end
 
+-- DCS unit types that will not engage from sloped ground, with the steepest slope (degrees) they tolerate.
+-- Probe run 4 (2026-09-29): a full Hawk battery on 12-32 deg ground detected its targets but its tracking radar
+-- never locked and it never fired; the same battery on <= 1.3 deg ground fired every time. ED: keep Hawks under ~2 deg.
+-- Probe run 5 (2026-09-29): an SA-2 on 11-32 deg ground never tracked or fired; SA-2s on <= 1.6 deg fired every time,
+-- whatever their heading. The SA-2 threshold between those is not measured yet; 2 deg is used, like the Hawk.
+M.SLOPE_LIMITS = { ["Hawk ln"] = 2, ["Hawk tr"] = 2, ["Hawk sr"] = 2, ["Hawk cwar"] = 2,
+                   ["SNR_75V"] = 2, ["S_75M_Volhov"] = 2 }
+
+-- Terrain slope (degrees) under a point, central differences over 30 m.
+local function slopeAt(p)
+  local d = 30   -- mutate: ok on the harness planes any sample distance gives the same slope
+  local hgt = land.getHeight
+  local gx = (hgt({ x = p.x + d, y = p.z }) - hgt({ x = p.x - d, y = p.z })) / (2 * d)
+  local gz = (hgt({ x = p.x, y = p.z + d }) - hgt({ x = p.x, y = p.z - d })) / (2 * d)
+  return math.deg(math.atan(math.sqrt(gx * gx + gz * gz)))
+end
+M.slopeAt = slopeAt
+
 local function inspectGroup(group, parsed, coa)
   local site = {
     name = parsed.name, label = parsed.label, roleWord = parsed.role, tags = parsed.tags,
     coalition = coa, group = group, units = {}, roles = {}, problems = {}, notes = {},
   }
   local units = group:getUnits() or {}
+  local worstSlope, worstType, worstLimit = nil, nil, nil
   for i = 1, #units do
     local unit = units[i]
     if U.alive(unit) then
       local rec = classifyUnit(unit)
       site.units[#site.units + 1] = { unit = unit, rec = rec, name = unit:getName() }
+      local limit = M.SLOPE_LIMITS[rec.type]
+      if limit and land and land.getHeight then
+        local ok, sl = pcall(slopeAt, unit:getPoint())
+        if ok and sl > limit and (not worstSlope or sl > worstSlope) then
+          worstSlope, worstType, worstLimit = sl, rec.type, limit
+        end
+      end
       site.roles[rec.role] = (site.roles[rec.role] or 0) + 1
       if rec.unknown then
         site.notes[#site.notes + 1] = string_format("unit type '%s' is not in the Janus unit database (ignored)", rec.type)
@@ -99,6 +125,11 @@ local function inspectGroup(group, parsed, coa)
   end
   for _, p in ipairs(checkDependencies(site)) do
     site.problems[#site.problems + 1] = p
+  end
+  if worstSlope then
+    site.problems[#site.problems + 1] = string_format(
+      "'%s' stands on a %.1f deg slope: DCS will not let it engage on ground steeper than about %d deg - move the site to flat ground",  -- mutate: ok message text
+      worstType, worstSlope, worstLimit)
   end
   return site
 end

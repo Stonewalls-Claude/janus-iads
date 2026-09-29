@@ -192,3 +192,60 @@ Note: DCS raises S_EVENT_SHOT for missiles, bombs and rockets, not for gun round
 | Su-25T | 8 | 0 | 0 |
 | Su-34 | 6 | 0 | 20 |
 | nil | 0 | 0 | 4 |
+
+## Run 4 - Hawk probe (2026-09-29, `JANUS_PROBE_HAWK.miz`)
+Why did the bench 02 Hawks never fire? Plain DCS (no janus.lua), z690, DCS 2.9.29, 25 min, loaded 00:57 UTC.
+Seven blue sites, each with its own pair of unarmed red Su-24M flying straight over it at 15,000 ft.
+Log: `I:\Claude-Workspace\logs\janus_probe_hawk_20260929.log`.
+
+| Site | Setup | Worst unit slope | Detected | Fired (first shot) | Kills |
+|---|---|---|---|---|---|
+| H1 | flat, full battery (PCP, SR, CWAR, TR, 3 LN), no route | 1.0 deg | yes (SR + CWAR, 45 nm) | yes, TR locked at ~14 nm | 2/2 |
+| H2 | flat, bench 02 set (no CWAR) | 0.7 deg | yes (SR) | yes, ~15 nm | 2/2 |
+| H3 | full battery on a mountainside | 11.6-31.7 deg | yes (SR + CWAR) | **never** - TR never locked, targets 0.2 nm overhead | 0 |
+| H4 | flat, full battery + one-point "Off Road" route | 1.3 deg | yes | yes, ~15 nm | 2/2 |
+| H5 | flat, `enableEmission(false)` at 5 s, `(true)` at 150 s | 0.6 deg | yes | yes | 2/2 |
+| H6 | flat, ALARM RED + emission 15 s on / 60 s off through the pass | 0.7 deg | yes | **never** - targets 0.6 nm overhead | 0 |
+| H7 | Patriot control | 1.5 deg | yes | yes | 2/2 |
+
+**Findings**
+1. **Sloped ground mutes the Hawk**: the search radars see the target, the tracking radar never locks. ED's advice
+   (keep Hawks under ~2 deg) matches; all firing sites stood on <= 1.3 deg.
+2. **Short emission windows mute the Hawk**: in 15 s windows it never gets from detection to TR lock to launch.
+   One off -> on switch (H5, the Janus "cued" start) is fine.
+3. Not causes: a missing CWAR (H2 fired), a one-point route (H4 fired).
+4. The Hawk only launches once the TR locks, at ~13-15 nm (ED-confirmed short-range bug since 2.9.12).
+5. Bench 02's Hawks were emitting continuously (cued), so slope is the likely cause there; their slopes were not
+   measured. The setup report now measures and reports it.
+
+**Janus workaround (built 2026-09-29)**
+- Setup report: every Hawk launcher/radar on ground steeper than 2 deg is reported as a problem with its slope
+  (`M.SLOPE_LIMITS`, `M.slopeAt`). Future battery spawning must pick flat ground (Phase 4 spawnBattery).
+- EMCON: doctrine `periodicByType = { ["Hawk tr"] = "always" }` - a Hawk site that would fall back to the periodic
+  policy stays up instead; an explicit `[emcon:periodic]` tag still wins. Cued starts are unchanged (H5 works).
+
+## Run 5 - SA-2 probe (2026-09-29, `JANUS_PROBE_SA2.miz`)
+Why has the SA-2 never launched in benches 01-03? Plain DCS (no janus.lua), z690, 25 min, loaded 02:29 UTC.
+Seven sites, each overflown from the north by 2 unarmed Su-24M at 20,000 ft. Log: `I:\Claude-Workspace\logs\janus_probe_sa2_20260929.log`.
+
+| Site | Setup | Worst unit slope | Fan Song track | Fired (first shot) | Kills |
+|---|---|---|---|---|---|
+| S1 | Fan Song + P-19 + 6 launchers facing the threat, flat | 1.6 deg | yes (~24 nm) | t=241 | 2/2 |
+| S2 | bench layout (3 launchers) facing west, flat | 0.7 deg | yes | t=295 | 2/2 |
+| S3 | full site facing directly away, flat | 1.4 deg | yes | t=349 (later: launchers slew) | 2/2 |
+| S4 | bench layout on a mountainside | 10.8-31.7 deg | **never** | **never** (targets 1.5 nm away) | 0 |
+| S5 | full site, `enableEmission(false)` at 5 s, `(true)` at 150 s | 1.3 deg | yes | t=284 | 2/2 |
+| S6 | full site, ALARM RED by script | 1.0 deg | yes | t=327 | 2/2 |
+| S7 | SA-3 control | 0.6 deg | yes | t=481 | 2/2 |
+
+**Findings**
+1. **Sloped ground mutes the SA-2** exactly like the Hawk: the P-19 sees the target, the Fan Song never tracks,
+   nothing launches. The limit lies between 1.6 deg (fires) and ~11 deg (does not) - not measured yet.
+2. Launcher heading does not stop it: facing away only delays the first shot (~50-100 s) while the launchers slew
+   (DCS 2.9.8 change). 3 launchers instead of 6, one emission off->on switch and ALARM RED all work.
+3. So the bench SA-2 (never fired in benches 01-03, slope never measured) most likely stood on sloped ground.
+
+**Janus workaround (built 2026-09-29)**: `SNR_75V` and `S_75M_Volhov` added to `M.SLOPE_LIMITS` (2 deg, provisional),
+so the setup report flags a sloped SA-2. Future battery spawning must pick flat ground for every SAM, and the
+benches should place all SAMs with the flat-ground finder. Open: the exact SA-2 threshold, and whether other
+systems (SA-3, SA-6, SA-10...) have the same limit.

@@ -249,8 +249,15 @@ end
 local ARM_GROUPS = { ["Shrike Probe"] = true, ["HARM Memory Probe"] = true }
 P.inFlight = {}   -- ARM memory test: weapon -> { target unit, target group, t0, last distance }
 
+-- every DCS event handler is wrapped (house rule); safeCall inside keeps the per-event tag
+local function wrapHandler(fn)
+  return function(...)
+    local args, n = { ... }, select("#", ...)
+    safeCall("handler", function() return fn(unpack(args, 1, n)) end)
+  end
+end
 local handler = {}
-function handler:onEvent(e)
+handler.onEvent = wrapHandler(function(_, e)
   safeCall("event", function()
     if e.id == world.event.S_EVENT_SHOT then
       local w = e.weapon
@@ -291,7 +298,7 @@ function handler:onEvent(e)
       end
     end
   end)
-end
+end)
 world.addEventHandler(handler)
 
 -- C: follow ARMs in flight once a second; when one disappears, log its last distance to the target
@@ -314,11 +321,11 @@ end)
 -- ------------------------------------------------------------------ A: EMCON sequence + monitor
 local OBS = "Observer RWR Probe"
 local STEPS = {
-  { 0,   "ALARM RED",       function(_, n) groundOptions(n, RED_ALARM, nil) end },
+  { 0,   "ALARM RED",       function(g, n) groundOptions(n, RED_ALARM, nil) end },
   { 60,  "EMISSION OFF",    function(g) g:enableEmission(false) end },
   { 120, "EMISSION ON",     function(g) g:enableEmission(true) end },
-  { 180, "ALARM GREEN",     function(_, n) groundOptions(n, GREEN_ALARM, nil) end },
-  { 240, "ALARM RED again", function(_, n) groundOptions(n, RED_ALARM, nil) end },
+  { 180, "ALARM GREEN",     function(g, n) groundOptions(n, GREEN_ALARM, nil) end },
+  { 240, "ALARM RED again", function(g, n) groundOptions(n, RED_ALARM, nil) end },
 }
 local EMCON_START, STAGGER = 90, 15
 P.emcon = {}

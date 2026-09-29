@@ -174,12 +174,13 @@ function M.on(eventId, tag, fn)
 end
 
 local handler = {}
-function handler:onEvent(e)
+-- each listener is already wrapped by M.on; the dispatcher itself is wrapped too (house rule: every handler)
+handler.onEvent = M.wrap("core.events", function(_, e)
   if not e then return end
   local list = M.listeners[e.id]
   if not list then return end
   for i = 1, #list do list[i](e) end
-end
+end)
 M._eventHandler = handler
 
 function M.startEvents()

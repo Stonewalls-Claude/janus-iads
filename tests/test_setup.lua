@@ -132,5 +132,46 @@ do
   check(N.suggest("Convoy 3") == nil, "no suggestion for unrelated names")
 end
 
+-- ---------------------------------------------------------------- slope check (probe run 4: Hawks on slopes never fire)
+do
+  F.reset()
+  local flatHeight = land.getHeight
+  -- flat west of z = 50 km; a 3 deg hillside (rising diagonally, north-east) from 50 to 80 km; 8 deg beyond 80 km
+  local k3, k8 = math.tan(math.rad(3)) / math.sqrt(2), math.tan(math.rad(8)) / math.sqrt(2)
+  land.getHeight = function(p)
+    if p.y > 80000 then return (p.x + p.y) * k8 end
+    if p.y > 50000 then return (p.x + p.y) * k3 end
+    return 0
+  end
+  F.addGroup{ name = "SAM Hawk Hill", coalition = coalition.side.BLUE, units = {
+    { type = "Hawk sr", x = 0, z = 60000 }, { type = "Hawk tr", x = 100, z = 60000 }, { type = "Hawk pcp", x = 0, z = 60200 },
+    { type = "Hawk ln", x = 200, z = 90000 }, { type = "Hawk ln", x = 300, z = 60000 } } }
+  F.addGroup{ name = "SAM Hawk Flat", coalition = coalition.side.BLUE, units = {
+    { type = "Hawk sr", x = 0, z = 1000 }, { type = "Hawk tr", x = 100, z = 1000 }, { type = "Hawk pcp", x = 0, z = 1200 },
+    { type = "Hawk ln", x = 200, z = 1000 } } }
+  F.addGroup{ name = "SAM SA-6 Hill", units = { { type = "Kub 1S91 str", x = 5000, z = 60000 }, { type = "Kub 2P25 ln", x = 5100, z = 60000 } } }
+  for _, t in ipairs({ "Hawk ln", "Hawk tr", "Hawk sr", "Hawk cwar", "SNR_75V", "S_75M_Volhov" }) do
+    F.addGroup{ name = "SAM One " .. t, coalition = coalition.side.BLUE, units = { { type = t, x = 20000, z = 60000 } } }
+  end
+  local J = load()
+  F.run(3)
+  local byName = {}
+  for _, site in ipairs(J.sites) do byName[site.name] = site end
+  local function slopeProblem(site)
+    for _, pr in ipairs(site and site.problems or {}) do if pr:find("slope", 1, true) then return pr end end
+  end
+  local pr = slopeProblem(byName["SAM Hawk Hill"])
+  check(pr ~= nil and pr:find("'Hawk ln' stands on a 8.0 deg", 1, true) ~= nil, "worst unit reported (" .. tostring(pr) .. ")")
+  check(slopeProblem(byName["SAM Hawk Flat"]) == nil, "Hawk on flat ground not reported")
+  check(slopeProblem(byName["SAM SA-6 Hill"]) == nil, "types without a slope limit not reported")
+  for _, t in ipairs({ "Hawk ln", "Hawk tr", "Hawk sr", "Hawk cwar", "SNR_75V", "S_75M_Volhov" }) do
+    local p3 = slopeProblem(byName["SAM One " .. t])
+    check(p3 ~= nil and p3:find("3.0 deg", 1, true) ~= nil, t .. " on 3 deg ground reported (limit 2)")
+  end
+  check(math.abs(J.slopeAt({ x = 0, z = 70000 }) - 3) < 0.01 and J.slopeAt({ x = 0, z = 0 }) == 0, "slopeAt measures degrees")
+  check(F.logContains("stands on a 8.0 deg slope"), "slope problem in the setup report")
+  land.getHeight = flatHeight
+end
+
 print(string.format("test_setup: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

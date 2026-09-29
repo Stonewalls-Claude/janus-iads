@@ -8,6 +8,13 @@
 - POWER, COMMS and CMD nodes no longer log link-lost / autonomy messages; a command post is no longer listed as its
   own parent; power plants are never reported as unlinked.
 - Harness: 111 network checks (was 60) incl. doctrine table pins; mutation check on the changed lines 117/117.
+- Hawks (probe run 4): the setup report flags Hawk units on ground steeper than 2 deg (DCS will not let them
+  engage); Hawk sites never fall back to the short periodic radar window (`periodicByType`), they stay up.
+- SA-2 (probe run 5): the setup report also flags SA-2 units (SNR_75V, S_75M_Volhov) on ground steeper than 2 deg.
+- tests/bench/janus_bench_03.lua + JANUS_BENCH_03.miz: Hawks on flat ground under Janus (4 kills), SA-2/Tor route,
+  slope-warning check; results in docs/BENCH_RESULTS.md.
+- Every DCS event handler is now visibly wrapped (dcs-check house rule of 2026-09-28): core dispatcher via
+  M.wrap, probe/bench handlers via wrapHandler.
 - tests/bench/janus_bench_02.lua + JANUS_BENCH_02.miz: relay loss before CMD loss, voice and datalink feeds, a blue
   US_MODERN network against unarmed Su-24M.
 

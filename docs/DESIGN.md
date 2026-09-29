@@ -426,7 +426,7 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 - It stays in the StonewallC standard as the IADS **only after** it wins on the bench. Skynet
   remains the standard until then.
 
-### 8A. Phase 2 fix list (from bench 01, agreed 2026-09-27) - items 1-5 built 2026-09-27, bench 02 (`JANUS_BENCH_02.miz`) queued
+### 8A. Phase 2 fix list (from bench 01, agreed 2026-09-27) - items 1-5 built 2026-09-27; bench 02 (2026-09-28, `docs/BENCH_RESULTS.md`) confirmed 1-3 and 5 in DCS, item 4 proven offline only; open: blue Hawks never fired
 1. **EW cover after C2 loss is doctrine-driven** (`c2LossCue = { mode, range, delay[tier] }` per profile), keeping
    "linked to command" and "under EW cover" separate:
    | Doctrine | EW feed after the command post is lost |
@@ -440,6 +440,10 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 3. Network summary must not list a C2 node as its own parent (`CMD North -> CMD North`).
 4. Keep a site emitting while its own missiles are in flight at a live target (S_EVENT_SHOT bookkeeping).
 5. Bench 02: kill the relay before CMD (or use a second network) so the relay-loss path is exercised.
+6. **Hawks (probe run 4, 2026-09-29)**: DCS Hawks never fire from ground steeper than ~2 deg or inside short
+   emission windows. Setup report measures and reports the slope; `periodicByType` keeps Hawks up instead of the
+   periodic policy. Bench 03 (2026-09-29): 4 Su-24M killed by Hawks under Janus (cued, datalink, no EW) - done.
+7. **SA-2 never launched in benches 01-03**: probe run 5 (2026-09-29) found slope again - an SA-2 on sloped ground never tracks or fires; heading, launcher count, emission switching and ALARM RED do not matter. SA-2 units added to the setup slope check. Next: place every bench SAM on flat ground and measure the slope limit for other systems.
 
 ### 8B. Phase 3 research items (parked, not for build yet)
 - HARM has inertial memory (flies to the last known emitter position, larger miss distance) and the F-16 HTS pod

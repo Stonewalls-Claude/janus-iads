@@ -398,6 +398,24 @@ do
   check(J.errorCount("emcon.shot") == 0, "malformed SHOT events raise no errors (" .. J.errorCount("emcon.shot") .. ")")
 end
 
+-- ---------------------------------------------------------------- 13b. Hawks never get the short periodic window
+do
+  F.reset()
+  -- no EW anywhere: every battery is uncovered and falls back to its autonomous policy
+  F.addGroup{ name = "SAM Hawk Alone", units = { { type = "Hawk tr", x = 0, z = 0 }, { type = "Hawk ln", x = 200, z = 0 } } }
+  F.addGroup{ name = "SAM SA-6 Alone", units = { { type = "Kub 1S91 str", x = 50000, z = 0 }, { type = "Kub 2P25 ln", x = 50200, z = 0 } } }
+  F.addGroup{ name = "SAM Hawk Tagged [emcon:periodic]", units = { { type = "Hawk tr", x = 90000, z = 0 }, { type = "Hawk ln", x = 90200, z = 0 } } }
+  local J = load()
+  F.run(10)
+  check(J.emcon.policyFor(node("SAM SA-6 Alone")) == "periodic", "uncovered SA-6: periodic")
+  check(J.emcon.policyFor(node("SAM Hawk Alone")) == "always", "uncovered Hawk: always instead of periodic (probe run 4)")
+  check(J.emcon.policyFor(node("SAM Hawk Tagged [emcon:periodic]")) == "periodic", "an explicit [emcon:periodic] tag still wins")
+  local on = 0
+  for t = 11, 100 do F.run(t); if F.emitting("SAM Hawk Alone") then on = on + 1 end end
+  check(on == 90, "uncovered Hawk emits continuously (" .. on .. "/90 s)")
+  check(J.Doctrines.US_MODERN.periodicByType["Hawk tr"] == "always", "every profile inherits the Hawk rule")
+end
+
 -- ---------------------------------------------------------------- 14. doctrine c2LossCue table (DESIGN 8A)
 do
   F.reset()

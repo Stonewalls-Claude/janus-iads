@@ -181,12 +181,13 @@ function M.on(eventId, tag, fn)
 end
 
 local handler = {}
-function handler:onEvent(e)
+-- each listener is already wrapped by M.on; the dispatcher itself is wrapped too (house rule: every handler)
+handler.onEvent = M.wrap("core.events", function(_, e)
   if not e then return end
   local list = M.listeners[e.id]
   if not list then return end
   for i = 1, #list do list[i](e) end
-end
+end)
 M._eventHandler = handler
 
 function M.startEvents()
@@ -4481,6 +4482,8 @@ do
 --                    switches instantly, so without this rule a site could dodge every ARM)
 --   restartByType    per DCS unit type overrides of restart
 --   minOn            once up, a radar stays up at least this long (stops flicker)
+--   periodicByType   per DCS unit type: the policy used instead of "periodic" for systems that cannot engage in a
+--                    short radar window (the Hawk)
 --   c2LossCue        how early warning still reaches batteries that have lost their command post (DESIGN 8A):
 --                      mode  "datalink" (the picture keeps flowing, e.g. Link 16), "voice" (plots passed by
 --                            radio/telephone from a nearby EW radar), or "none" (only the battery's own radar)
@@ -4504,6 +4507,9 @@ local BASE = {
   restart = { LR = 10, MR = 8, SR = 5, NONE = 5 },
   restartByType = { ["RPC_5N62V"] = 25, ["SNR_75V"] = 10, ["snr s-125 tr"] = 10 },
   c2LossCue = { mode = "voice", range = 40000, delay = TIER(60, 40, 30, 20) },
+  -- DCS types whose tracking radar cannot acquire, lock and launch inside a short periodic window use this policy
+  -- instead of "periodic" (probe run 4: a Hawk cycled 15 s on / 60 s off never fired, even with targets overhead).
+  periodicByType = { ["Hawk tr"] = "always" },
 }
 
 local function derive(base, changes)
@@ -5135,7 +5141,14 @@ function E.policyFor(n)
     -- a battery that still gets early warning (through the network, or by c2LossCue after losing command)
     -- keeps its linked EMCON policy; without it the crew falls back to searching on its own radar
     if n.covered then return d.emcon[n.kind] or "cued" end  -- mutate: ok fallback only for a custom table missing a kind
-    return d.autonomous[n.kind] or "periodic"
+    local p = d.autonomous[n.kind] or "periodic"             -- mutate: ok fallback only for a custom table missing a kind
+    if p == "periodic" and d.periodicByType then   -- mutate: ok today every override is "always", which a non-periodic policy never needs
+      for _, u in ipairs(n.site.units) do
+        local alt = d.periodicByType[u.rec.type]
+        if alt then return alt end
+      end
+    end
+    return p
   end
   if n.autonomous then return d.autonomous[n.kind] or "always" end  -- mutate: ok fallback only for a custom table missing a kind
   return d.emcon[n.kind] or "always"
@@ -5500,17 +5513,43 @@ local function checkDependencies(site)
   return problems
 end
 
+-- DCS unit types that will not engage from sloped ground, with the steepest slope (degrees) they tolerate.
+-- Probe run 4 (2026-09-29): a full Hawk battery on 12-32 deg ground detected its targets but its tracking radar
+-- never locked and it never fired; the same battery on <= 1.3 deg ground fired every time. ED: keep Hawks under ~2 deg.
+-- Probe run 5 (2026-09-29): an SA-2 on 11-32 deg ground never tracked or fired; SA-2s on <= 1.6 deg fired every time,
+-- whatever their heading. The SA-2 threshold between those is not measured yet; 2 deg is used, like the Hawk.
+M.SLOPE_LIMITS = { ["Hawk ln"] = 2, ["Hawk tr"] = 2, ["Hawk sr"] = 2, ["Hawk cwar"] = 2,
+                   ["SNR_75V"] = 2, ["S_75M_Volhov"] = 2 }
+
+-- Terrain slope (degrees) under a point, central differences over 30 m.
+local function slopeAt(p)
+  local d = 30   -- mutate: ok on the harness planes any sample distance gives the same slope
+  local hgt = land.getHeight
+  local gx = (hgt({ x = p.x + d, y = p.z }) - hgt({ x = p.x - d, y = p.z })) / (2 * d)
+  local gz = (hgt({ x = p.x, y = p.z + d }) - hgt({ x = p.x, y = p.z - d })) / (2 * d)
+  return math.deg(math.atan(math.sqrt(gx * gx + gz * gz)))
+end
+M.slopeAt = slopeAt
+
 local function inspectGroup(group, parsed, coa)
   local site = {
     name = parsed.name, label = parsed.label, roleWord = parsed.role, tags = parsed.tags,
     coalition = coa, group = group, units = {}, roles = {}, problems = {}, notes = {},
   }
   local units = group:getUnits() or {}
+  local worstSlope, worstType, worstLimit = nil, nil, nil
   for i = 1, #units do
     local unit = units[i]
     if U.alive(unit) then
       local rec = classifyUnit(unit)
       site.units[#site.units + 1] = { unit = unit, rec = rec, name = unit:getName() }
+      local limit = M.SLOPE_LIMITS[rec.type]
+      if limit and land and land.getHeight then
+        local ok, sl = pcall(slopeAt, unit:getPoint())
+        if ok and sl > limit and (not worstSlope or sl > worstSlope) then
+          worstSlope, worstType, worstLimit = sl, rec.type, limit
+        end
+      end
       site.roles[rec.role] = (site.roles[rec.role] or 0) + 1
       if rec.unknown then
         site.notes[#site.notes + 1] = string_format("unit type '%s' is not in the Janus unit database (ignored)", rec.type)
@@ -5541,6 +5580,11 @@ local function inspectGroup(group, parsed, coa)
   end
   for _, p in ipairs(checkDependencies(site)) do
     site.problems[#site.problems + 1] = p
+  end
+  if worstSlope then
+    site.problems[#site.problems + 1] = string_format(
+      "'%s' stands on a %.1f deg slope: DCS will not let it engage on ground steeper than about %d deg - move the site to flat ground",  -- mutate: ok message text
+      worstType, worstSlope, worstLimit)
   end
   return site
 end

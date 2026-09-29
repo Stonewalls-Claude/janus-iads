@@ -22,6 +22,8 @@
 --                    switches instantly, so without this rule a site could dodge every ARM)
 --   restartByType    per DCS unit type overrides of restart
 --   minOn            once up, a radar stays up at least this long (stops flicker)
+--   periodicByType   per DCS unit type: the policy used instead of "periodic" for systems that cannot engage in a
+--                    short radar window (the Hawk)
 --   c2LossCue        how early warning still reaches batteries that have lost their command post (DESIGN 8A):
 --                      mode  "datalink" (the picture keeps flowing, e.g. Link 16), "voice" (plots passed by
 --                            radio/telephone from a nearby EW radar), or "none" (only the battery's own radar)
@@ -45,6 +47,9 @@ local BASE = {
   restart = { LR = 10, MR = 8, SR = 5, NONE = 5 },
   restartByType = { ["RPC_5N62V"] = 25, ["SNR_75V"] = 10, ["snr s-125 tr"] = 10 },
   c2LossCue = { mode = "voice", range = 40000, delay = TIER(60, 40, 30, 20) },
+  -- DCS types whose tracking radar cannot acquire, lock and launch inside a short periodic window use this policy
+  -- instead of "periodic" (probe run 4: a Hawk cycled 15 s on / 60 s off never fired, even with targets overhead).
+  periodicByType = { ["Hawk tr"] = "always" },
 }
 
 local function derive(base, changes)
