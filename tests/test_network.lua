@@ -461,5 +461,37 @@ do
   check(up > 0 and up < 130, "some but not all batteries cued (" .. up .. ")")
 end
 
+-- ---------------------------------------------------------------- 12. coalitions never mix
+-- A blue "EW ..." radar standing right beside a red network (no red EW of its own) must not cover, cue or feed red,
+-- and a blue EW spawned mid-mission must land in the blue network.
+do
+  F.reset()
+  F.addGroup{ name = "CMD Red", units = { { type = "S-300PS 54K6 cp", x = 0, z = 0 } } }
+  F.addGroup{ name = "SAM SA-6 Red", units = { { type = "Kub 1S91 str", x = 20000, z = 0 }, { type = "Kub 2P25 ln", x = 20300, z = 0 } } }
+  F.addGroup{ name = "EW Blue Beside", coalition = BLUE, units = { { type = "FPS-117", x = 10000, z = 0 } } }
+  local redJet = F.addGroup{ name = "Red Jet", coalition = RED, category = AIR, units = { { type = "MiG-29S", x = 30000, z = 0, alt = 6000 } } }.units[1]
+  F.sees["EW Blue Beside"] = { redJet }
+  local J = load()
+  F.run(20)
+  check(node("EW Blue Beside").net.key == "blue/main", "blue EW sits in the blue network")
+  check(node("SAM SA-6 Red").net.key == "red/main", "red SAM sits in the red network")
+  for _, n in ipairs(node("SAM SA-6 Red").net.nodes) do
+    check(n.site.coalition == RED, "red network holds only red nodes (found " .. n.name .. ")")
+  end
+  check(not node("SAM SA-6 Red").covered, "blue EW gives the red SAM no EW cover")
+  check(node("SAM SA-6 Red").parent ~= node("EW Blue Beside"), "red SAM never links through a blue node")
+  local redTracks = 0
+  for _ in pairs(node("SAM SA-6 Red").net.tracks or {}) do redTracks = redTracks + 1 end
+  check(redTracks == 0, "blue EW plots never reach the red picture")
+  local blueTracks = 0
+  for _ in pairs(node("EW Blue Beside").net.tracks or {}) do blueTracks = blueTracks + 1 end
+  check(blueTracks == 1, "blue EW plots the red jet into the blue picture")
+  F.spawn{ name = "EW Blue Late", coalition = BLUE, units = { { type = "FPS-117", x = 15000, z = 5000 } } }
+  F.run(30)
+  check(node("EW Blue Late") and node("EW Blue Late").net.key == "blue/main", "blue EW spawned mid-mission joins the blue network")
+  check(not node("SAM SA-6 Red").covered, "red SAM still uncovered after the blue spawn")
+  check(J.net and #J.net.list == 4, "4 nodes total, got " .. tostring(J.net and #J.net.list))
+end
+
 print(string.format("test_network: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

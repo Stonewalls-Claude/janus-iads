@@ -7,6 +7,10 @@
 - A site stays emitting while its own missiles fly at a live target (S_EVENT_SHOT bookkeeping, max 120 s).
 - POWER, COMMS and CMD nodes no longer log link-lost / autonomy messages; a command post is no longer listed as its
   own parent; power plants are never reported as unlinked.
+- Coalition separation confirmed and pinned by test 12 in tests/test_network.lua (2026-09-29): a blue `EW` radar
+  right beside a red network gives red no cover, no links and no plots, and a blue `EW` spawned mid-mission joins
+  the blue network. (The coalition-blind `EW` pickup was Skynet's, not Janus's: Janus builds one network per
+  coalition from `coalition.getGroups(side)` and the unit's own coalition on spawn.)
 - Harness: 111 network checks (was 60) incl. doctrine table pins; mutation check on the changed lines 117/117.
 - Hawks (probe run 4): the setup report flags Hawk units on ground steeper than 2 deg (DCS will not let them
   engage); Hawk sites never fall back to the short periodic radar window (`periodicByType`), they stay up.
