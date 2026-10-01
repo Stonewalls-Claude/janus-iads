@@ -1,5 +1,6 @@
 -- Janus IADS - group-name parsing: role words and [tags].
 -- "SAM SA-10 Hama [net:North] [skill:VET]"  ->  { role = "SAM", label = "SA-10 Hama", tags = { net = "North", skill = "VET" } }
+-- "COMMS Hama [ag]" (a bare flag)          ->  tags = { ag = "true" }
 
 JANUS = JANUS or {}
 local M = JANUS
@@ -27,12 +28,36 @@ function N.parse(name)
     tags[string_lower(M.util.trim(k))] = M.util.trim(v)
     return ""
   end)
+  -- bare flags: "COMMS Hama [ag]" -> tags.ag = "true"
+  bare = bare:gsub("%[([%w_%-]+)%]", function(k)
+    tags[string_lower(k)] = "true"
+    return ""
+  end)
   bare = M.util.trim(bare)
   local first, rest = string_match(bare, "^(%S+)%s*(.*)$")
   if not first then return nil end
   local role = N.roleByWord[string_lower(first)]
   if not role then return nil end
   return { role = role, label = rest ~= "" and rest or bare, tags = tags, name = name }
+end
+
+-- A group's role: from its name, or - for an airplane group made only of AWACS types (UnitDB AIRBORNE_SENSOR) - AWACS
+-- with no role word needed, so callsign-first names like "Magic AEW ACE" work (GCI naming standard, 2026-09-30).
+-- Tags in the name still apply.
+function N.parseGroup(group)
+  local name = group:getName()
+  local p = N.parse(name)
+  if p then return p end
+  if group:getCategory() ~= Group.Category.AIRPLANE then return nil end
+  local units = group:getUnits() or {}
+  if #units == 0 then return nil end
+  for i = 1, #units do
+    local rec = M.UnitDB[units[i]:getTypeName()]
+    if not (rec and rec.role == "AIRBORNE_SENSOR") then return nil end
+  end
+  local q = N.parse(M.settings.ROLE_WORDS.AWACS .. " " .. name)
+  if q then q.name, q.byType = name, true end   -- mutate: ok the AWACS word always parses
+  return q
 end
 
 -- For groups that were NOT recognised: guess what the mission maker meant ("Sam SA6 site" -> "SAM").

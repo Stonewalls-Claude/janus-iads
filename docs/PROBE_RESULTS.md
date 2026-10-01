@@ -250,20 +250,134 @@ so the setup report flags a sloped SA-2. Future battery spawning must pick flat 
 benches should place all SAMs with the flat-ground finder. Open: the exact SA-2 threshold, and whether other
 systems (SA-3, SA-6, SA-10...) have the same limit.
 
-## Run 6 - Phase 2 pre-build probe (built 2026-09-29, `JANUS_PROBE_P2.miz`) - NOT RUN YET
-One night mission, plain DCS (no janus.lua), about 50 min. Script `tests/probe/janus_probe_p2.lua`; offline smoke run
-against a DCS stub is clean. Answers every DCS question Phase 2 depends on:
-- **A. Level ladder (missile launches vs ground slope).** 14 sites whose every unit sits inside a slope band; one site
-  weapons free at a time (190 s window) while 2 unarmed Su-24M at 15,000 ft pass overhead; `WINDOW END ... FIRES/MUTE`.
-  SA-2 and Hawk at 2.5-3.5 and 4.5-6.5 deg (between the known 1.6 fires / 11 mute); SA-3, SA-6, SA-11, SA-10,
-  Patriot at 3-5 and >= 10 deg. Sets `M.SLOPE_LIMITS` for every system. A `BAND-MISS` spawn line means the terrain
-  search found no spot fully inside the band (its real slopes are logged).
-- **B. Identification.** Which sensors report the detection `type` flag, from what range: `DET` lines per
-  (sensor, target) when first held and on every flag change. Blue EW cluster (FPS-117, 55G6, 1L13, P-19), blue E-3A,
-  red A-50, and the 14 ladder SAM radars; targets Su-27, MiG-29A, MiG-31, Tu-22M3 (red) and F-16C, F-15C (blue).
-- **C. Statics.** 8 static command posts / radios / generators (`.Command Center`, `Bunker 1`, `Military staff`,
-  `Shelter`, `Comms tower M`, `TV tower`, `GeneratorF`, `Electric power box`) + 2 command vehicles (Ural-375 PBU,
-  SKP-11) as controls: static API listing, then explosions of 20-3000 kg until each dies; every event naming them
-  (`EVENT` lines) vs a 2 s isExist/getLife poll (`POLL` lines). Limitation: statics are script-spawned, not placed in
-  the Mission Editor.
+## Run 6 - Phase 2 pre-build probe (2026-09-30, `JANUS_PROBE_P2.miz`)
+Plain DCS (no janus.lua), z690, loaded 00:12:50 UTC (8:12 pm EDT), 48 min of mission time. Paused once at t=1035 by a
+client connect that timed out (no one joined), resumed at 01:05 UTC. 0 script errors. Log:
+`I:\Claude-Workspace\logs\janus_probe_p2_20260930.log`. Every ladder site landed in its band.
+
+### A. Level ladder - missile launches vs ground slope (one site weapons free at a time, 2 unarmed Su-24M overhead)
+| Site | System | Unit slopes | Result | Notes |
+|---|---|---|---|---|
+| L01 | SA-2 | 2.7-3.3 deg | **fires** 2/2 hits | Fan Song tracked at ~18 nm |
+| L02 | Hawk | 3.0-3.5 deg | **mute** | Hawk sr held both targets to 1.5 nm; Hawk tr never came on |
+| L03 | SA-2 | 4.8-6.1 deg | **mute** | Fan Song never on, targets passed 0.8 nm away |
+| L04 | Hawk | 4.5-6.4 deg | **mute** | as L02 |
+| L05 | SA-3 | 3.1-5.0 deg | **fires** 2 | |
+| L06 | SA-6 | 3.8-4.9 deg | **fires** 2 | |
+| L07 | SA-11 | 3.5-5.0 deg | **fires** 3 | |
+| L08 | SA-10 | 3.1-4.8 deg | **fires** 2 | |
+| L09 | Patriot | 3.4-4.9 deg | **fires** 2 | |
+| L10 | SA-3 | 11.9-19.9 deg | **mute** | only the P-19 on; Low Blow never on (targets 0.3 nm) |
+| L11 | SA-6 | 13.7-26.5 deg | **fires** 2 | |
+| L12 | SA-11 | 10.2-17.2 deg | **fires** 2 | |
+| L13 | SA-10 | 13.6-22.3 deg | **mute** | no radar came on at all, though the group "detected" both targets |
+| L14 | Patriot | 10.9-13.7 deg | **fires** 2 | |
+
+With runs 4-5 (Hawk fires <= 1.3, SA-2 fires <= 1.6, both mute on 11-32): **limits set in `M.SLOPE_LIMITS`**:
+Hawk 2 deg, SA-2 3 deg, SA-3 5 deg, SA-10 5 deg (5-11.9 / 4.8-13.6 not measured, so 5 is conservative).
+SA-6, SA-11 and Patriot fired on 10-26 deg: no limit set. Each limited type's radars and launchers are listed; the
+setup report names the worst unit.
+
+### B. Identification - the detection `type` flag
+| Sensor | Reports the aircraft type? |
+|---|---|
+| EW radars (FPS-117, 55G6, 1L13, P-19 as EW) | **never** - held Su-27 / MiG-29A / MiG-31 / Tu-22M3 / A-50 from 313 km to overhead, `type` always 0 |
+| E-3A | **always**, from first contact (up to 382 km): every red type |
+| A-50 | **always**, from first contact (up to 299 km): blue jets and even the ground EW radars |
+| SA-11 (Buk SR/TELAR) | yes, from 99 km |
+| SA-6 (1S91) | yes, from 52 km |
+| SA-10 | only inside 18 km |
+| Hawk | only inside 12 km |
+| SA-2, SA-3, Patriot | never |
+
+So in DCS, identification comes from AWACS and a few SAM radars, never from ground EW. Janus's track picture takes
+the type from any sensor that reports it (DESIGN 4.2); for a ground-only network the doctrine fallback is needed.
+
+### C. Static command posts, radios, generators
+| Object | Life at spawn | Died at | Events |
+|---|---|---|---|
+| Bunker 1 | 4 | 20 kg | UNIT_LOST + DEAD |
+| Military staff | 1200 | 1000 kg | UNIT_LOST + DEAD |
+| Comms tower M | 200 | 150 kg | DEAD |
+| TV tower | 150 | 60 kg | DEAD |
+| GeneratorF | 10 | 20 kg | DEAD |
+| Electric power box | 150 | 150 kg | DEAD |
+| Shelter | 8000 | **survived 3000 kg** (life 3049) | - |
+| .Command Center | 4000 | **not tested** (probe bug: its first blast was scheduled at "now" and never ran) | - |
+| Ural-375 PBU, SKP-11 (units) | 2 | 20 kg | UNIT_LOST + DEAD |
+- DCS **does** fire `S_EVENT_DEAD` (and often `S_EVENT_UNIT_LOST`) for statics, at once (the 2 s poll saw it up to 2 s later); after
+  death a static reports `isExist() == false`, `getLife() == 0` and `StaticObject.getByName` still finds it.
+- Statics: `Object.getCategory` = 3 (STATIC), **no `getCategoryEx`** (the call fails); `getDesc().life` is 0 for
+  `.Command Center` and `Bunker 1`, so use `getLife()` at spawn.
+- The dedicated server logs "Can't open model" for `.Command Center` and `Bunker 1` (no shapes on a server); they still
+  exist and take damage.
+- `coalition.getStaticObjects` lists script-spawned statics; ME-placed statics not tested.
+- Open: `.Command Center` destruction; how much a real bomb does to the 8000-life Shelter.
+
+## Run 7 - SA-5 slope, SA-3 / SA-10 in between, Command Center (2026-09-30, `JANUS_PROBE_P3.miz`)
+Plain DCS, z690, queue job `20260930-113223`, loaded 11:32 UTC, 41 min, 0 script errors.
+Log: `I:\Claude-Workspace\logs\janus_probe_p3_20260930.log`. Every site landed in its band.
+
+| Site | System | Unit slopes | Result | Notes |
+|---|---|---|---|---|
+| M01 | SA-5 | 0.0-0.5 deg | **fires** 2 | targets start 100 km out at 25,000 ft |
+| M02 | SA-5 | 2.8-3.4 deg | **fires** 2 | |
+| M03 | SA-5 | 5.1-6.4 deg | **mute** | only the Tin Shield (RLS_19J6) came on; Square Pair never; targets to 2.9 nm |
+| M04 | SA-5 | 10.8-21.0 deg | **mute** | as M03 |
+| M05 | SA-3 | 6.9-7.9 deg | **mute** | only the P-19 on (run 6: fires at 5.0) |
+| M06 | SA-10 | 6.5-8.7 deg | **mute** | no radar on at all (run 6: fires at 4.8) |
+
+Limits: **SA-5 3 deg** (`RPC_5N62V`, `S-200_Launcher`); SA-3 and SA-10 stay at 5 deg, now bracketed (fire <= 5.0 / 4.8,
+mute from 6.5-6.9).
+
+Statics: **`.Command Center` died** after 20+60+150+400+1000+3000 kg (life 4000 -> 3892 -> 3622 -> 2901 -> 1100 -> 0,
+S_EVENT_DEAD); **Shelter died** after a second 3000 kg blast (life 8000 -> ... -> 3049 -> 0). A static command post can
+be killed, but it takes a heavy strike.
+
+## Run 8 - red AI anti-radiation missiles (2026-09-30, `JANUS_PROBE_P4.miz`)
+Plain DCS, z690, queue job `20260930-130430`, 25 min, 0 script errors. Log:
+`I:\Claude-Workspace\logs\janus_probe_p4_20260930.log` (Tacview in the queue results). Seven lanes 70 km apart, blue
+sites weapons hold with radars on, one red shooter per lane from 130 km east.
+
+| Lane | Shooter, weapons, task | Loaded? | Fired | Result |
+|---|---|---|---|---|
+| L1 | Su-24M 2x Kh-58U, SEAD | **no: gun only** | - | pylons 2/7 with `{FE382A68-...}` load nothing |
+| L2 | Su-34 4x Kh-31P, SEAD | yes | 1 at 84.6 km (at the **L1 Hawk**, another lane) | hit, 108 s; 3 missiles never used |
+| L3 | Su-34 4x Kh-31P, AttackGroup on its Patriot, weaponType ARM | yes | 1 at 82.7 km (at the **L2 Patriot**) | hit the Patriot str, 105 s |
+| L4 | Su-25T 2x Kh-58U + 2x Kh-25MPU, SEAD | yes | Kh-58U at 68 and 53.5 km, Kh-25MP at 29 km (L3 Patriot) | all 3 hit; Kh-58U flew **284 s and 190 s**, Kh-25MP 89 s |
+| L5 | Su-34 2x Kh-31P, SEAD; Hawk dark 20 s after launch | yes | 1 at 87 km at the Hawk, 1 at 86 km at the **L4 Patriot** | Hawk shot: **missed by 14.2 km** (radar dark 75 s before arrival); Patriot shot hit, 113 s |
+| L6 | Su-24M 2x Kh-31P, SEAD | **no: gun only** | - | pylons 2/7 with `{D8F2C90B-...AF03}` load nothing |
+| L7 | JF-17 2x LD-10, SEAD | yes | 1 at 29.4 km at the L5 Patriot (by then up) | hit its ECS, 79 s |
+
+Findings:
+1. **Red AI does fire ARMs, at Patriots too.** Runs 2-3 "never launched" had two causes: the Su-24M carried no
+   missiles at all (the Kh-58U / Kh-31P CLSIDs load nothing on its pylons 2/7, silently), and the Patriot was weapons
+   free (runs 2-3). Every loaded shooter fired; 6 of 7 ARMs hit a radar (4 Patriots, 1 Hawk; the 7th missed because
+   the Hawk went dark).
+2. The AI picks **any** emitting radar in reach, not its assigned one: 3 of 5 shooters fired at a neighbouring lane,
+   even with `AttackGroup` + `weaponType` ARM on its own Patriot.
+3. Launch ranges: Kh-31P 83-87 km, Kh-58U 53-68 km, LD-10 and Kh-25MP 29 km. Average speeds: Kh-31P ~770-920 m/s,
+   **Kh-58U only 190-280 m/s** (from 13,000 ft; a slow, lofted flight), Kh-25MP ~330, LD-10 ~370.
+4. **Kh-31P has no memory either**: the Hawk went dark 20 s after launch and the missile missed by 14 km.
+5. **Patriot never fires at ARMs**: the dark Patriot at L5 came up weapons free at the Kh-31P launch and fired three
+   PAC-2 at aircraft 74-99 km away, none at the Kh-31P passing 6 km from it.
+6. Su-34s used 1 of 4 Kh-31P per pass (L2 and L3 kept 3).
+
+For Janus: ARM speeds in `janus_arm.lua` set from these (Kh-31P 800, Kh-58U 300, LD-10 400 m/s); red SEAD is usable in
+benches (Su-34 Kh-31P, Su-25T Kh-58U/Kh-25MPU, JF-17 LD-10); blue doctrine cannot count on Patriot shooting ARMs.
+
+## Run 9 - probes 4, 6 and 7 again on DCS 2.9.30 (2026-09-30, after the "SAM acquisition below the horizon" fix)
+DCS 2.9.30.28536, z690, queue jobs `20260930-213948-*` (`JANUS_PROBE_HAWK_R2.miz`, `JANUS_PROBE_P2_R2.miz`,
+`JANUS_PROBE_P3_R2.miz`, same scripts as runs 4, 6 and 7), 0 script errors. Logs `I:\Claude-Workspace\logs\
+janus_probe_{hawk,p2,p3}_dcs2930_20260930.log`.
+
+**Nothing measurable changed.**
+- Slope ladders (runs 6 and 7): the same sites on the same slopes gave the same verdict in all 20 windows - SA-2 fires
+  at 2.7-3.3 deg and is mute at 4.8-6.1; Hawk mute from 3 deg; SA-3 / SA-10 fire to 5 and are mute from 6.5-6.9;
+  SA-5 fires to 3.4 and is mute from 5.1; SA-6, SA-11, Patriot fire on 10-26 deg. **`SLOPE_LIMITS` unchanged.**
+- Hawk (run 4): same shots within a second of 2.9.29 (H1, H2, H4, H5 fire; steep H3 and the 15 s-window H6 never do);
+  the Hawk still launches only at ~13-15 nm. **`W.DCS_REACH` (Hawk 25 km) unchanged.**
+- Identification (run 6): same "type" flag ranges (AWACS 299 / 382 km, SA-11 99 km, SA-6 52 km, SA-10 / Hawk 11-13 km).
+- Statics: same blast results; `.Command Center` killed in the P2 rerun too (the run-6 timer bug is fixed).
+So the slope mutes are not the below-horizon acquisition bug; whatever the patch fixed does not show in these tests.
 

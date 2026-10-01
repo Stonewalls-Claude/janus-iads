@@ -110,11 +110,13 @@ Degraded, not dead: only the command post itself kills seats; losing radios or p
 `[alt:North 2]` on the main post): real networks kept backup posts. Soviet/Russian: long takeover delay, reduced
 authority; NATO/US: short delay. No alternate named -> no takeover.
 
-To check in DCS before building (a short night probe):
-- exact static type names for bunkers, command centres, comms towers and generators (from the unit database, as in
-  Phase 0);
-- whether DCS reliably fires `S_EVENT_DEAD` for statics. If not, Janus checks the few statics (`isExist` /
-  `getLife`) on its existing 1-s pass.
+Checked in DCS (probe run 6, 2026-09-30): `.Command Center`, `Bunker 1`, `Military staff`, `Shelter`,
+`Comms tower M`, `TV tower`, `GeneratorF` and `Electric power box` spawn as statics (category Fortifications).
+DCS fires `S_EVENT_DEAD` (often also `S_EVENT_UNIT_LOST`) when a static dies; a dead static reports `isExist()`
+false and life 0. So Janus uses the event and keeps a cheap `isExist` check on its 5-s network pass as a backstop.
+Statics have no `getCategoryEx` (Janus must not call it on them) and their life varies hugely (GeneratorF 10, Comms
+tower 200, Military staff 1200, Command Center 4000, Shelter 8000), which is fine: a hardened post should be hard
+to kill. Not yet seen: a `.Command Center` destroyed, ME-placed statics.
 
 ### 4.2 Track picture
 - **Sensor polling** goes through `Controller:getDetectedTargets()` on emitting sensors. It is
@@ -128,9 +130,11 @@ To check in DCS before building (a short night probe):
   sensor knows it: `getDetectedTargets()` returns a `type` flag per detection (DCS's own model of NCTR / ESM /
   visual ID). Once any sensor holding the track reports `type = true`, the track carries its DCS type name from
   then on (until the track is dropped). Until then it has only its class. Doctrine can add an ID delay by crew tier.
-  To probe: which DCS sensors (EW radars, SAM radars, AWACS) ever report `type = true`, and at what range - if EW
-  radars never do, the fallback is a doctrine rule (e.g. identify after N s of continuous track by a linked
-  command node), recorded in `docs/PROBE_RESULTS.md` before Phase 2 builds on it.
+  **Probe run 6 (2026-09-30):** ground EW radars *never* report the type (313 km to overhead); AWACS (E-3A, A-50)
+  always do from first contact (up to 380 km); SA-11 from ~100 km, SA-6 from ~50 km, SA-10 and Hawk only inside
+  ~15 km; SA-2, SA-3 and Patriot never. So a network with an AWACS or Buk/Kub radars identifies through them; for a
+  ground-EW-only network the doctrine fallback applies: a track held continuously by a linked command node for the
+  doctrine's ID time (by crew tier) gets its type. Phase 2 builds both.
 
 ### 4.3 Threat evaluation and weapon-target assignment (WTA)
 - **Threat score:** time-to-weapons-release against defended assets, closure, altitude and type.
@@ -239,6 +243,57 @@ with memory. **Probe run 3:** in DCS, Shrike *and* HARM both lose guidance when 
 models no memory. Janus cannot steer a missile, so it cannot add memory back; the restart rules above and the crew
 awareness model are what keep ARMs dangerous.
 
+### 4.5C How Phase 3 implements ARM defence (built 2026-09-30)
+Source: `src/janus_arm.lua` (+ hooks in `janus_emcon.lua`, `janus_wta.lua`; doctrine field `arm`). Tests:
+`tests/test_arm.lua`. Bench: `tests/bench/janus_bench_05.lua`.
+
+- **Launches.** `S_EVENT_SHOT` with a weapon whose guidance is `RADAR_PASSIVE` starts a ground-truth flight (position and
+  velocity every second). Per-type speed / range / smoky motor from a table (Kh-31P, Kh-58U, LD-10 speeds measured in
+  probe run 8; an unlisted ARM gets 700 m/s, 80 km). No crew is told.
+- **Awareness (4.5A).** Each second, for every enemy ARM in flight and every working ground node of each network:
+  - *radar*: an emitting radar holds it inside `detectionRange x factor` with line of sight, with chance `p` x crew
+    (GRN 0.6 ... ACE 1.4) / (1 + tracks held / 10). Tier A (Tor, Pantsir) factor 0.4, p 0.8; tier B (modern SAM
+    radars, 64H6E / FPS-117) 0.35, 0.25; tier C (SA-2/3/5, P-19, 55G6, 1L13...) 0.25, 0.03. Airborne radars never.
+  - *eyes*: a group with an optical unit (UnitDB `optic`) within 10 km (15 km for smoky motors), 06:00-19:00, chance 0.5
+    x crew; works while the radar is dark.
+  - *confirmation*: `confirmScans` sightings inside `confirmWindow` s, or eyes, or two linked sensors holding it
+    within 1.5 s of each other.
+  - *network*: a confirmed ARM reaches every linked node after `netDelay[tier]` (the confirming node at once);
+    unlinked nodes know only what they saw themselves.
+  - *suspicion*: an identified SEAD type (F-16C, F/A-18C, F-4E, Tornado, Su-24M, Su-34, Su-25T, JF-17), moving, nose-on
+    within `shooterCone` degrees and `shooterRange`, gives an emitting radar a `suspicion[tier]` chance per second of
+    going dark for `suspectDark` s (never tier A, point defence, [hold] sites or a site with its own missile flying).
+- **Which radar is threatened.** From what the node knows (its own last fix or the network's, dead-reckoned): a missile
+  within `cone` degrees of the radar (or within 2 km), and (linked nodes) no more than 10 km beyond the first radar on
+  its path that was emitting (or dark for < 120 s) when the network first judged it - fixed per missile, so the sites
+  behind do not go dark one after another - and nobody once the missile is past that radar (bench 05). Time to impact =
+  distance / max(missile speed, half the table speed). The most urgent threat is the one acted on. No radar holds an
+  ARM beyond 50 km.
+- **Ladder,** after `reaction[tier]` s: *engage* (tier A or point defence with `pdEngage`: forced up), *accept* ([hold] or
+  doctrine `accept`), *covered* (`trustPd` and a working point-defence or tier-A site within `pdCoverRange`: stays up),
+  *finish* (`finishShot`, own missile in flight, more than `finishMargin` s to impact), else *dark* for time to impact
+  x (1 +- `predictErr[tier]`) + `margin`, at least the per-type minimum (SA-10 30 s, SA-11 20, SA-5 60, SA-2/3 15) or
+  `minDark`. Point defence and tier-A sites within `pdCoverRange` of any threatened site are forced up (10 s, renewed).
+- **Holding dark (suppression).** When the dark time runs out, a site stays dark in 5 s steps while an identified SEAD
+  aircraft is still nose-on; `afterMax = "restart"` caps the whole dark period at `maxDark` (then 60 s with no new
+  suspicion), `"wait"` has no cap. A site is released early when the network watched the missile die (last fix within
+  3 s of its end) and no other known missile is aimed at it; it is then logged as "gone N km short (shot down?)" or
+  "gone at a radar".
+- **EMCON / WTA.** The ARM decision overrides the EMCON policy (dark beats minOn and the own-missile hold; forced-up
+  still waits for the restart time). WTA offers no targets to a site dark against an ARM.
+- **Scoring.** Per node: seconds dark, times dark, ARM hits (with the radar state at the hit); per network summary every
+  300 s; `JANUS.arm.stats` (launched, hits, hits on dark radars, missiles seen to die short).
+- **Doctrines.** SOVIET_PVO waits out the SEAD aircraft (`afterMax = "wait"`, maxDark 300); RUSSIA_MODERN trusts
+  Tor/Pantsir cover; US_MODERN never goes dark on suspicion and reacts fastest; NVA blinks (maxDark 60, minDark 10,
+  higher suspicion); GENERIC_THIRD_WORLD confirms slowly (5 sightings) and reacts late.
+- **Not built (parked):** decoy emitters, relocation (8B research), C-RAM against weapons (DCS never does it).
+- **Retested on DCS 2.9.30 (horizon fix), 2026-09-30:** slope limits, the Hawk's short reach and benches 04/05
+  unchanged (probe run 9).
+- **DCS reality (bench 05):** AGM-88C still hits a radar that went dark (4 of 5 hits); Kh-31P does not. Against HARMs
+  going dark buys suppression (no new launches) and point defence is what saves the radar; relocation and decoys
+  (parked) are the real answer.
+- **Cost.** Idle networks skip nodes with no ARM state; 150 nodes / 30 aircraft stay ~1.2 ms Lua per simulated second.
+
 ### 4.6 Degradation and autonomy
 - Losing a C2 or its comms link means subordinate nodes switch to **autonomous mode** after a
   doctrine delay. They use only their own sensors and fall back to local EMCON rules.
@@ -283,6 +338,50 @@ Source: `src/janus_network.lua`, `janus_tracks.lua`, `janus_emcon.lua`, `janus_d
 - **Check mode.** `CHECK_MODE = true` draws every node on the F10 map: a ring (engagement range, or EW range), a
   label with kind, tier and state (linked / unlinked / autonomous / offline) and a line to its command hub.
 - **Cost.** Offline harness: 150 nodes and 30 aircraft cost about 0.8 ms of Lua time per simulated second.
+
+### 4.6B How Phase 2 implements static nodes, the track picture and WTA (built 2026-09-30)
+Source: `src/janus_network.lua`, `janus_tracks.lua`, `janus_wta.lua`, `janus_emcon.lua`, `janus_setup.lua`.
+Tests: `tests/test_phase2.lua`. Bench: `tests/bench/janus_bench_04.lua` (DCS gate run pending).
+
+- **Static nodes.** The setup scan reads `coalition.getStaticObjects` too; a static whose name starts with `CMD`,
+  `COMMS` or `POWER` becomes a node (other role words on a static are reported and ignored). A static is alive while
+  it exists with life > 0; its death arrives as `S_EVENT_DEAD` and the 5-s network pass catches any it missed.
+  Statics spawned later are picked up from their `S_EVENT_BIRTH`. Tags work as on groups; bare flags like `[ag]` parse
+  as `tags.ag = "true"`.
+- **Air-ground radio.** `COMMS ... [ag]` is not a relay: it belongs to the command post named by `[cmd:]` or the
+  nearest within `agRange` (15 km). Per post `agState` = `own` (no radio modelled), `ok`, or the doctrine's
+  `agBackup.mode` (`backup` / `none`) when every radio is down (destroyed or out of power). Changes are logged and
+  fire the `radio` callback (for the GCI interface, 4.10).
+- **Backup link.** After the normal link search, a node that found no path but has a working, active command post
+  within `linkBackup.range` stays linked with `linkVia = "backup"`; `linkBackup.delay[tier]` is added to its cue delay.
+- **Alternate command post.** `[alt:Name]` on a post makes Name its alternate: the alternate stands by (not a
+  command root) while the main post is up; `altTakeover[tier]` after the main post goes down (destroyed, equipment,
+  power) it takes over (`takeover` callback); if the main post comes back, the alternate stands down again.
+- **Track picture.** Tracks carry a number (stable per aircraft across pictures), class, position, velocity (from
+  successive plots), the sensors holding them and identification: the DCS type once a detection reports `type`, or on
+  the network picture after the doctrine's `idTime[tier]` of continuous track (`idBy = "held N s"`). A detection with
+  neither a visual nor a range fix is ignored.
+- **WTA** (`wta` doctrine fields, every 2 s, per network, linked batteries and point defence only):
+  - Envelope per battery from DCS data: range from the launchers, minimum range / altitude band / channels from the
+    tracking radar (defaults 5 % of range, 30-20,000 m, 1 channel).
+  - Pk estimate: base by range class (LR 0.75, MR 0.7, SR 0.6); falls to 40 % between 70 % and 100 % of range;
+    crossing up to x0.7; receding beyond half range x0.6; faster than 600 m/s x0.7; crew GRN 0.8 / REG 1 / VET 1.1 /
+    ACE 1.2; 0 outside the envelope or with no missiles (`Unit:getAmmo`, refreshed every 10 s). Judged now and `lead`
+    seconds ahead, whichever is better, so the radar is up in time.
+  - Threat: time until the track reaches the nearest defended node (command post, battery, point defence, EW) at its
+    closing speed (floor 50 m/s): `1000 / (t + 30)`; x1.2 below 1,500 m; helicopters x0.7.
+  - DCS reality over unit data (bench 04): Hawk reach capped at 25 km (`W.DCS_REACH`), Patriot 2 channels
+    (`W.DCS_CHANNELS`).
+  - A shooter's channel stays reserved for the target it is already guiding, so a new, bigger threat cannot pull it
+    off (bench 04 ping-pong).
+  - Assignment in threat order: shooters already on the target stay while within `handoffMargin` of the best bid;
+    then the best bids (point defence at `pdDiscount`) are added until the combined Pk reaches `pkGoal` or
+    `maxShooters`; a shooter takes at most its channels. Logged: assigned / handed from A to B / no shooter can engage.
+  - EMCON: on a WTA network a linked battery is cued only by its assignment (plus cue delay, feed delay and backup
+    delay); unassigned batteries stay dark. Networks with `wta.enabled = false` (GENERIC_THIRD_WORLD) and unlinked or
+    autonomous batteries keep the Phase 1 behaviour.
+- **Cost.** Offline harness, 150 nodes and 30 aircraft: about 1.0 ms of Lua time per simulated second with WTA
+  (0.6 ms without).
 
 ### 4.7 Doctrine profiles (data, not code)
 Shipped profiles, which mission makers can copy and edit:
@@ -410,6 +509,32 @@ GCI tick is cheap):
 5. **Weapons control** - doctrine sets weapons free / tight for batteries near friendly fighters (JEZ vs MEZ);
    DCS's own ID never shoots friendlies, so this is about realism and fighter-or-SAM choice, not safety.
 
+**Built (Phase 2.5 core, 2026-09-30):** `src/janus_gci.lua`, contract test `tests/test_gci_api.lua` (with the reference
+consumer), bench monitor `tests/bench/janus_gci_monitor.lua`. As built:
+- `version` 1; `instance` changes each start; `on(event, fn, key)` / `off(handle)`; events `nodeLost`, `nodeRestored`
+  (repaired, power, linked, radio ok), `nodeDegraded` (equipment, no power, unlinked, radio backup / none),
+  `authorityChanged` (alternate in command / standby); payload `{ event, name, kind, coalition, state, reason, net, t }`;
+  subscribers run through `M.safe`.
+- `tracks(coal [, nodeName])` -> copies `{ id, num, x, y, z, vx, vy, vz, class, typeKnown, typeName, lastSeen, holders }`
+  (`id` is the DCS unit ID - contract, tested);
+  with a node name: what that post sees (network picture while up and linked, plus its own radar), nothing if dead or
+  unpowered.
+- `commandNodes(coal)` -> `{ name, kind = "ground"|"airborne", net, tier, x, y, z, alive, powered, working, linked,
+  active, inCommand, parent, alternate, alternateFor, radio = own|ok|backup|none, reach (m: the air-ground radio's
+  reach now - doctrine `agReach` with the radio up or not modelled, `agBackup.range` on backup, 0 with none; an
+  airborne node `agReach`), seats ([seats:n] tag), fighterControl, awacsTakeover }`. An AWACS group needs no role word:
+  an airplane group made only of AWACS types (A-50, E-3A, E-2C, KJ-2000...) is an airborne node whatever its name
+  (callsign-first names such as "Magic AEW ACE"; added 2026-09-30). Doctrine: SOVIET / RUSSIA / NVA / THIRD_WORLD `fighterControl = "ground"`; NATO / US
+  `"aew"` with `awacsTakeover = true`; US_VIETNAM `"aew"`.
+- `radarHeads(coal)` -> `{ name, x, y, z, r2, airborne, net }` for working, powered, emitting, linked EW radars and AWACS.
+- `controlState(coal, point [, postName])` -> `{ ground, via, radio, reach, dist }`: a post in command whose radio
+  reaches the point (its `reach` above) and a radar head covering it; the nearest such post answers, or only `postName`
+  when given (additions of 2026-09-30, no version bump).
+- `samZones(coal)` -> `{ name, kind, net, x, z, r, rMin, altMin, altMax, emitting, linked, tier }` for every working
+  battery and point-defence group; the consumer keeps friendly fighters out of all of them and uses `emitting` for
+  the enemy's.
+- Not yet: an unlinked EW's voice-relayed picture in `radarHeads` (8A `c2LossCue`) - GCI sees only linked heads.
+
 Cost: all of it reuses the Phase 1-2 picture and the 1-s coverage pass; GCI polls it on its own tick. Both sides
 stand alone: Janus runs without any GCI (goal 7), and GCI 2.0 keeps working without Janus (falls back to its own
 "EW ..." groups). Load order when both are used: Janus first, then GCI (STANDARDS.md to be updated when Skynet is
@@ -490,7 +615,7 @@ Rules that keep it that simple:
   every option has a comment saying what it does. Load it with a second DO SCRIPT FILE *before*
   `janus.lua`.
 - **Settings by name (optional).** Put tags in square brackets in the group name
-  (`[skill:VET]`, `[emcon:dark]`, `[protects:SAM SA-10 Hama]`). No file needed.
+  (`[skill:VET]`, `[emcon:dark]`, `[protects:SAM SA-10 Hama]`, `[hold]` = never go dark for an ARM). No file needed.
 
 ### 5.0.1 It tells you what it found
 - At mission start Janus writes a **setup report** to `dcs.log`: networks per side, what each
@@ -612,11 +737,14 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 | 0 | Unit data generated from the DCS datamine + Olympus databases; battery preset data with sources; project skeleton, build, harness; C-RAM/AI engagement probe mission | **Done 2026-09-24.** Probe run 1 (`docs/PROBE_RESULTS.md`): C-RAM never engages weapons in DCS (aircraft only); Kh-31P flight 102 s, unopposed |
 | 0.5 | Probe runs 2 (JANUS_PROBE_V2.miz) and 3 (JANUS_PROBE_V3.miz): ARM defence, weapon tracking, EMCON timing, cross-group cueing, ARM memory, janus.lua smoke test | **Done 2026-09-25** (`docs/PROBE_RESULTS.md`): Tor/Pantsir shoot HARMs 9-13 s after launch; EW radars hold ARMs at 100+ km within 2 s (filter needed); `enableEmission` is instant, ALARM warm-up 5-55 s; launchers need a radar in their own group; Shrike and HARM both miss once the radar goes dark; janus.lua runs clean in DCS. Open, not blocking: Patriot vs red ARMs (red AI never launched), SA-2/SA-5 radar state without a target |
 | 1 | Network model, links, C2/comms/power, EW, batteries, autonomy, EMCON | Harness green; red network runs on the bench. **Done 2026-09-27** (`docs/BENCH_RESULTS.md`): bench 01 ran with no Janus errors; cueing, power reserve, C2 loss, 180 s autonomy, periodic EMCON, own-track hold and restart times all behaved as designed. To fix: POWER/COMMS link and autonomy log noise, C2 listed as its own parent, relay-loss path untested (bench ordering). Open: should EW cue batteries directly after C2 loss? A HARM hit an SA-6 radar 39 s after it went dark (feeds Phase 3) |
-| 2 | Track picture, WTA with kill probability, handoffs; static command posts, radios and power as network nodes, link-radio backup channel, alternate command post (4.1A) | Static nodes degrade the network as designed; track picture, WTA and handoffs work on a Janus bench with no Janus errors (no Skynet comparison during the build; see Phase 5) |
-| 2.5 | **GCI feed core** (4.10, agreed 2026-09-29): one command hierarchy - `JANUS.gci.commandNodes` (ground, naval and airborne command nodes, AWACS as a sensor + command node, doctrine delegation field, seat binding, air-ground radio and its backup, seats moving to the alternate command post; 4.1A), `radarHeads`, `controlState`, `samZones`, `tracks` (with identification), `version`, `instance`, `on()`/`off()`, interface test; so StonewallC GCI 2.0 can be built on Janus instead of Skynet | `tests/test_gci_api.lua` green; GCI 2.0 runs on the Janus picture (`tracks`, `radarHeads`, no picture of its own) on a bench: its seats sit in Janus command nodes and fall silent when their node dies, follow Janus EW/C2 losses per doctrine, and fighters keep out of live SAM zones; the same bench runs clean with no GCI loaded |
-| 3 | Launch detection and HARM defence ladder, point defence, C-RAM | HARM defence works on the full bench, repeated runs |
-| 4 | Blue doctrine, naval, AWACS, AAA, Vietnam profiles, battery-preset spawning (flat ground only), both coalitions at once, rest of `JANUS.gci` (commitRequests, weapons control; 4.10) | Blue and Vietnam benches plus dual-side performance targets met; GCI 2.0 runs on the Janus picture and loses control when Janus loses C2/EW |
+| 2 | Track picture, WTA with kill probability, handoffs; static command posts, radios and power as network nodes, link-radio backup channel, alternate command post (4.1A). **Done 2026-09-30** (4.6B): offline tests and mutation check green; bench 04 passed in DCS (`docs/BENCH_RESULTS.md`) | Static nodes degrade the network as designed; track picture, WTA and handoffs work on a Janus bench with no Janus errors (no Skynet comparison during the build; see Phase 5) |
+| 2.5 | **GCI feed core** (4.10, agreed 2026-09-29; Janus side **built 2026-09-30**; **gate passed 2026-09-30** on the GCI session's `StonewallC_GCIJ_BENCH` FULL / NOGCI / NOJANUS runs, `docs/BENCH_RESULTS.md`: `janus_gci.lua`, interface test 68 checks, bench monitor; GCI 2.14.0 is the GCI session's): one command hierarchy - `JANUS.gci.commandNodes` (ground, naval and airborne command nodes, AWACS as a sensor + command node, doctrine delegation field, seat binding, air-ground radio and its backup, seats moving to the alternate command post; 4.1A), `radarHeads`, `controlState`, `samZones`, `tracks` (with identification), `version`, `instance`, `on()`/`off()`, interface test; so StonewallC GCI 2.0 can be built on Janus instead of Skynet | `tests/test_gci_api.lua` green; GCI 2.0 runs on the Janus picture (`tracks`, `radarHeads`, no picture of its own) on a bench: its seats sit in Janus command nodes and fall silent when their node dies, follow Janus EW/C2 losses per doctrine, and fighters keep out of live SAM zones; the same bench runs clean with no GCI loaded |
+| 3 | Launch detection and HARM defence ladder, point defence, C-RAM. **Done 2026-09-30** (4.5C): `janus_arm.lua`, `tests/test_arm.lua` (237 checks), mutation check green; probe run 8 (red ARMs); bench 05 runs 1-2, 0 Janus errors. Closed by the owner 2026-09-30 with a bench 05 re-validation on DCS 2.9.30 (horizon fix) to follow | HARM defence works on the full bench, repeated runs |
+| 4 | Blue doctrine, naval, AWACS, AAA (fire discipline built 2026-09-30: `janus_aaa.lua`, doctrine `aaa` free / flak trap; ground observers `arm.observers`), battery-preset spawning (flat ground only), both coalitions at once, rest of `JANUS.gci` (commitRequests, weapons control; 4.10). Vietnam moved to Phase 6 (owner, 2026-09-30) | Blue bench plus dual-side performance targets met; GCI runs on the Janus picture and loses control when Janus loses C2/EW. Public **beta** (0.9 pre-release) after this phase |
 | 5 | Optional modules, non-coder docs (quick start, tutorial, recipes, troubleshooting), demo missions, public 1.0 | A non-coder builds a working IADS from the quick start alone (the project owner, as the test user); **Janus beats Skynet 3.5.0 on the same bench, repeated runs** (the one comparison, recorded for the release) |
+| 6 | **Vietnam** (owner, 2026-09-30): NVA_VIETNAM_1965_72 tuned on a bench - flak traps on (`janus_aaa.lua`, built in Phase 4), ground spotters seeing Shrike launches (`arm.observers`, built), VHF voice reach ~150 km, Fan Song blinks, dummy sites, MiG GCI ambush stations via GCI - and US_VIETNAM_1965_72 (Hawk-defended bases). Small: mostly doctrine values on existing machinery | A Vietnam bench (NVA SA-2/AAA network vs a Shrike-armed Iron Hand/strike package) runs clean and reads like history |
+| 7 | **Iran 1970s - Spellout / Peace Ruby** (owner, 2026-09-30): the US-built Imperial Iranian radar networks (19 sites built 1962-77: Spellout in the north, Peace Ruby in the south, joined by the Peace Net troposcatter link; digitised radar data to two hardened command posts, primary and backup) with the Shah-era SAMs (Improved Hawk, Rapier). Small: two sector networks, an alternate command post (`[alt:]`) and the backup link already exist | An Iran bench (two sectors, primary post lost -> backup post takes over, sectors keep sharing over the backup link) runs clean |
+| 8 | **Iraq 1991 - Kari** (owner, 2026-09-30): the French-built KARI command system (national ADOC, sector operations centres, intercept operations centres, EW radars reporting up the chain), Soviet and western SAMs (SA-2/3/6/8, Roland), very heavy AAA, and how it fell apart (decapitation of the SOCs/IOCs, decoy drones making sites emit, HARMs against autonomous emitters). Bigger: needs a tiered command chain (ADOC > SOC > IOC) and decoy handling | A Kari bench (tiered C2, decoys, decapitation) runs clean and reads like history |
 
 ## 10. Decisions
 1. Licence: **GPL-3.0** (decided 2026-09-23).

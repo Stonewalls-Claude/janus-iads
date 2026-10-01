@@ -7,10 +7,13 @@ defence networks in the same mission: command posts, early-warning radars, AWACS
 short-range and point defence (including C-RAM), AAA and naval units. Each side follows its own
 doctrine, from Vietnam-era SA-2 belts to modern Patriot/C-RAM defences.
 
-> **Status: Phase 1 (network).** `janus.lua` builds your air-defence network (command posts, relays,
-> power, early warning, SAM sites), keeps SAM radars dark until the network cues them, and lets sites act
-> alone when they lose their command post. Not yet: engagement assignment (Phase 2) and anti-radiation
-> missile defence (Phase 3). See [`docs/DESIGN.md`](docs/DESIGN.md) for the plan.
+> **Status: Phase 3 (anti-radiation missile defence), in testing.** `janus.lua` builds your air-defence
+> network (command posts, relays, radios and power - also as static objects - early warning, AWACS, SAM sites),
+> keeps SAM radars dark until the network assigns them a target (weapon-target assignment with handoffs), lets
+> sites act alone when they lose their command post, and defends its radars against anti-radiation missiles
+> (crews notice them realistically, go dark, finish their shot, or stay up to fight under Tor/Pantsir cover).
+> A read-only interface (`JANUS.gci`) lets a ground-control script use the picture. Not yet: blue/naval/Vietnam
+> profiles tuned on benches (Phase 4) and the public 1.0 docs (Phase 5). See [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Install (no coding needed)
 1. Download `janus.lua` from **Releases** (or `dist/janus.lua` from this repo).

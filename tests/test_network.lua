@@ -74,7 +74,7 @@ do
   check(not F.emitting("SAM SA-10 Hama"), "cue delay not yet over")
   F.run(40)
   check(F.emitting("SAM SA-10 Hama"), "SA-10 up after cue + REG delay")
-  check(F.logContains("SAM SA-10 Hama ON (cued, track"), "ON logged with reason")
+  check(F.logContains("SAM SA-10 Hama ON (assigned T"), "ON logged with reason (WTA assignment)")
   local onAt = J.net.nodes["SAM SA-10 Hama"].emcon.onSince
   check(onAt >= 26 and onAt <= 40, "came up within poll + 6 s cue delay (at " .. onAt .. ")")
   F.move(b, 400000, 0)                          -- leaves
@@ -254,11 +254,14 @@ do
   check(not F.emitting(n.name), "[emcon:dark] never emits")
   F.killGroup(F.groups["CMD Homs"])
   F.run(20)
-  check(not n.linked, "explicit command lost -> unlinked even though CMD Hama is near")
+  check(n.linked and n.linkVia == "backup" and n.parent == node("CMD Hama"),
+    "explicit command lost -> backup link to CMD Hama, 11 km away (SOVIET_PVO backup 40 km)")
+  check(n.linkDelay == 15, "backup link adds the ACE delay (15 s)")
+  F.killGroup(F.groups["CMD Hama"])
   F.run(40)
-  check(not n.autonomous, "ACE not autonomous yet")
+  check(not n.linked and not n.autonomous, "every command post gone -> unlinked, ACE not autonomous yet")
   F.run(95)
-  check(n.autonomous, "ACE autonomous ~60 s after losing its command post (SOVIET_PVO ACE 60)")
+  check(n.autonomous, "ACE autonomous ~60 s after losing its last command post (SOVIET_PVO ACE 60)")
 end
 
 -- ---------------------------------------------------------------- 8. rotating EW (RUSSIA_MODERN), no command post

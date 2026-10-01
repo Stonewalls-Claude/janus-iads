@@ -23,6 +23,11 @@ Build the .miz: `python3 tools/build_probe_miz.py --template <empty Syria .miz>`
 
 Exit gate for Phase 0: `docs/PROBE_RESULTS.md` exists with one row per weapon class.
 
+## Run 8 - red AI ARMs (`JANUS_PROBE_P4.miz`)
+Seven lanes of red ARM shooters against blue Hawk / Patriot / NASAMS (weapons hold). See `docs/PROBE_RESULTS.md` run 8.
+Rebuild: `python3 tools/build_probe_miz.py --template tests/probe/JANUS_PROBE_P3.miz --out tests/probe/JANUS_PROBE_P4.miz
+--scripts tests/probe/janus_probe_p4.lua --title "JANUS PROBE P4"`. Run ~26 min.
+
 ## Run 6 - Phase 2 pre-build probe (`JANUS_PROBE_P2.miz`)
 Level ladder (SAM launches vs slope), sensor identification (`type` flag), static command posts / radios / power.
 See `docs/PROBE_RESULTS.md` run 6. Rebuild: `python3 tools/build_probe_miz.py --template tests/probe/JANUS_PROBE_SA2.miz

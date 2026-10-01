@@ -1,29 +1,19 @@
--- Janus IADS - Phase 2 pre-build probe, run 6 (JANUS_PROBE_P2.miz). Plain DCS, NO janus.lua.
--- One mission answers every DCS question Phase 2 depends on. Records to dcs.log with the tag "JANUS_PROBE".
+-- Janus IADS - probe run 7 (JANUS_PROBE_P3.miz). Plain DCS, NO janus.lua. Records to dcs.log as "JANUS_PROBE".
 -- Lua 5.1, sanitized, one global (JANUS).
 --
--- Part A  LEVEL LADDER - at what ground slope does each SAM stop launching? (runs 4-5: Hawk and SA-2 fire on
---         <= 1.6 deg and never on 11-32 deg; the others were never measured). 14 sites, each on ground whose
---         every unit sits inside a slope band; one site at a time is weapons free for its own window while a pair
---         of unarmed Su-24M (15,000 ft) flies straight over it from the north. Everyone else holds fire.
---           SA-2, Hawk:                       bands 2.5-3.5 deg and 4.5-6.5 deg (between the known 1.6 and 11)
---           SA-3, SA-6, SA-11, SA-10, Patriot: bands 3-5 deg and >= 10 deg
--- Part B  IDENTIFICATION - which sensors report the DCS detection `type` flag, and from what range? Every sensor
---         group's getDetectedTargets() is sampled every 10 s; a DET line is logged the first time a sensor holds a
---         target and whenever its visible/type/distance flags change. Dedicated sensors: blue EW cluster (FPS-117,
---         55G6, 1L13, P-19 as separate groups) + blue E-3A, fed by 4 red jets (Su-27, MiG-29A, MiG-31, Tu-22M3)
---         flying inbound from ~300 km; red A-50, fed by 2 blue jets (F-16C, F-15C). The ladder sites add the SAM
---         radars.
--- Part C  STATICS - blue static command posts, radios and generators (and two command vehicles as controls) are
---         listed through the static API, then hit with explosions of rising power until they die. Every event whose
---         initiator or target is a probe static is logged by name, and a 2 s poll logs isExist/getLife changes, so
---         the report can compare "event" with "poll" for each object.
--- Timeline: ladder windows from t=120 s, 190 s each (~47 min); detection and static tests run alongside. END 52 min.
+-- Part A  LEVEL LADDER, round 2 (run 6 left these open):
+--           SA-5 (S-200, 255 km reach - never used in a Janus bench yet): flat control, 2.5-3.5, 4.5-6.5, >= 10 deg.
+--             SA-5 targets start 100 km out at 25,000 ft and each SA-5 window lasts 460 s.
+--           SA-3 and SA-10 between their run-6 "fires" (5 deg) and "mute" (12 deg): band 6.5-9.5 deg.
+--         One site at a time is weapons free for its window while 2 unarmed Su-24M fly straight over it from the north.
+-- Part C  STATICS: .Command Center (run 6 never blasted it) and Shelter (survived 3000 kg) hit with rising
+--         explosions up to 9 x 3000 kg; events vs a 2 s poll as in run 6.
+-- Part B of run 6 (identification) is not repeated.
 
 JANUS = JANUS or {}
 JANUS.probe = JANUS.probe or {}
 local P = JANUS.probe
-P.VERSION = "0.7.0-p2"
+P.VERSION = "0.8.0-p3"
 
 local TAG = "JANUS_PROBE"
 local env_info, env_error = env.info, env.error
@@ -157,26 +147,20 @@ local LAYOUT = {
            { "SA-11 Buk LN 9A310M1", 170, -100 }, { "SA-11 Buk LN 9A310M1", -170, -100 } },
   SA10 = { { "S-300PS 40B6M tr", 0, 0 }, { "S-300PS 64H6E sr", 150, 100 }, { "S-300PS 54K6 cp", -150, 100 },
            { "S-300PS 5P85C ln", 0, 230 }, { "S-300PS 5P85C ln", 200, -120 }, { "S-300PS 5P85C ln", -200, -120 } },
+  SA5 = { { "RPC_5N62V", 0, 0 }, { "RLS_19J6", 300, 0 }, { "S-200_Launcher", 0, 150 }, { "S-200_Launcher", 130, 75 },
+          { "S-200_Launcher", 130, -75 }, { "S-200_Launcher", 0, -150 }, { "S-200_Launcher", -130, -75 }, { "S-200_Launcher", -130, 75 } },
   PATRIOT = { { "Patriot str", 0, 0 }, { "Patriot ECS", 120, 90 }, { "Patriot EPP", -120, 90 }, { "Patriot cp", 0, -150 },
               { "Patriot ln", 0, 230 }, { "Patriot ln", 200, -120 } },
 }
 -- region centres (terrain): L = Alawite hills east of the anchor (moderate slopes), N = Nur mountains (steep)
 local REGION = { L = { x0 + 10000, z0 + 30000 }, N = { x0 + 100000, z0 + 60000 } }
 local LADDER = {
-  { id = "L01", sys = "SA2",     lo = 2.5, hi = 3.5, reg = "L" },
-  { id = "L02", sys = "HAWK",    lo = 2.5, hi = 3.5, reg = "L" },
-  { id = "L03", sys = "SA2",     lo = 4.5, hi = 6.5, reg = "L" },
-  { id = "L04", sys = "HAWK",    lo = 4.5, hi = 6.5, reg = "L" },
-  { id = "L05", sys = "SA3",     lo = 3,   hi = 5,   reg = "L" },
-  { id = "L06", sys = "SA6",     lo = 3,   hi = 5,   reg = "L" },
-  { id = "L07", sys = "SA11",    lo = 3,   hi = 5,   reg = "L" },
-  { id = "L08", sys = "SA10",    lo = 3,   hi = 5,   reg = "L" },
-  { id = "L09", sys = "PATRIOT", lo = 3,   hi = 5,   reg = "L" },
-  { id = "L10", sys = "SA3",     lo = 10,  hi = 45,  reg = "N" },
-  { id = "L11", sys = "SA6",     lo = 10,  hi = 45,  reg = "N" },
-  { id = "L12", sys = "SA11",    lo = 10,  hi = 45,  reg = "N" },
-  { id = "L13", sys = "SA10",    lo = 10,  hi = 45,  reg = "N" },
-  { id = "L14", sys = "PATRIOT", lo = 10,  hi = 45,  reg = "N" },
+  { id = "M01", sys = "SA5",  lo = 0,   hi = 1.2, reg = "L", win = 460, start = 100000, alt = 25000 },
+  { id = "M02", sys = "SA5",  lo = 2.5, hi = 3.5, reg = "L", win = 460, start = 100000, alt = 25000 },
+  { id = "M03", sys = "SA5",  lo = 4.5, hi = 6.5, reg = "L", win = 460, start = 100000, alt = 25000 },
+  { id = "M04", sys = "SA5",  lo = 10,  hi = 45,  reg = "N", win = 460, start = 100000, alt = 25000 },
+  { id = "M05", sys = "SA3",  lo = 6.5, hi = 9.5, reg = "L", reg2 = "N" },
+  { id = "M06", sys = "SA10", lo = 6.5, hi = 9.5, reg = "L", reg2 = "N" },
 }
 local WINDOW_START, WINDOW_LEN = 120, 190
 local shotsBy = {}        -- group name -> shots fired
@@ -193,6 +177,11 @@ local function spawnLadderSite(s)
   local layout = LAYOUT[s.sys]
   local r = REGION[s.reg]
   local cx, cz, lo, hi, hit = findBand(r[1], r[2], layout, s.lo, s.hi, 6000)
+  if not hit and s.reg2 then
+    local r2 = REGION[s.reg2]
+    local cx2, cz2, lo2, hi2, hit2 = findBand(r2[1], r2[2], layout, s.lo, s.hi, 6000)
+    if hit2 then cx, cz, lo, hi, hit = cx2, cz2, lo2, hi2, hit2 end
+  end
   used[#used + 1] = { cx, cz }
   s.x, s.z = cx, cz
   s.name = string_format("PROBE %s %s %g-%g", s.id, s.sys, s.lo, s.hi)
@@ -255,8 +244,9 @@ local function openWindow(s)
   s.shots0 = shotsBy[s.name] or 0
   setGroundOptions(s.name, O_G.val.ROE.OPEN_FIRE)
   log(string_format("WINDOW OPEN %s", s.name))
-  -- targets start 35 km north, pass overhead after ~160 s, end 40 km south
-  jets(coalition.side.RED, RED, "PROBE TGT " .. s.id, "Su-24M", 2, s.x + 35000, s.z, s.x - 40000, s.z, 15000 * FT, 220)
+  -- targets start 35 km north (SA-5: 100 km), pass overhead, end 40 km south
+  local start = s.start or 35000
+  jets(coalition.side.RED, RED, "PROBE TGT " .. s.id, "Su-24M", 2, s.x + start, s.z, s.x - 40000, s.z, (s.alt or 15000) * FT, 220)
 end
 local function closeWindow(s)
   if not s.name then return end
@@ -266,10 +256,13 @@ local function closeWindow(s)
   local g = Group.getByName("PROBE TGT " .. s.id)
   if g and g:isExist() then g:destroy() end
 end
-for i, s in ipairs(LADDER) do
-  local t = WINDOW_START + (i - 1) * WINDOW_LEN
-  at(t, "window " .. s.id, function() openWindow(s) end)
-  at(t + WINDOW_LEN - 5, "window end " .. s.id, function() closeWindow(s) end)
+local tw = WINDOW_START
+for _, s in ipairs(LADDER) do
+  s.win = s.win or WINDOW_LEN
+  s.t0 = tw
+  at(tw, "window " .. s.id, function() openWindow(s) end)
+  at(tw + s.win - 5, "window end " .. s.id, function() closeWindow(s) end)
+  tw = tw + s.win
 end
 
 -- ------------------------------------------------------------------ flat spots for parts B and C
@@ -280,118 +273,16 @@ local function flatSpot(x, z, minSep)
   return cx, cz, lo, hi
 end
 
--- ------------------------------------------------------------------ part B: identification
--- blue EW cluster in the desert east of the ladder (far from every ladder pass), red jets inbound from the north-east
-local EWC = { x0 - 150000, z0 + 170000 }
-local SENSORS = {}        -- group names whose detections are sampled (ladder sites are added once spawned)
-local EW_TYPES = { "FPS-117", "55G6 EWR", "1L13 EWR", "p-19 s-125 sr" }
-local ewx, ewz
-at(20, "EW cluster", function()
-  ewx, ewz = flatSpot(EWC[1], EWC[2], 3000)
-  for i, t in ipairs(EW_TYPES) do
-    local name = "PROBE EW " .. i .. " " .. t
-    local ux, uz = ewx + (i - 1) * 400, ewz
-    local ok = safeCall("spawn " .. name, coalition.addGroup, BLUE, Group.Category.GROUND,
-      { name = name, task = "Ground Nothing", units = { { name = name .. "-1", type = t, skill = "Excellent", x = ux, y = uz, heading = 0 } } })
-    log(string_format("SPAWN %s slope %.2f %s", name, slope(ux, uz), ok and "ok" or "FAILED"))
-    SENSORS[#SENSORS + 1] = name
-    timer_schedule(function() safeCall("ew options", setGroundOptions, name, O_G.val.ROE.WEAPON_HOLD); return nil end,
-      nil, timer_getTime() + 2)
-  end
-end)
-
-local function awacs(cty, name, acType, x, z, alt)
-  local orbit = { id = "Orbit", params = { pattern = "Circle", point = { x = x, y = z }, altitude = alt, speed = 180 } }
-  local ok = safeCall("spawn " .. name, coalition.addGroup, cty, Group.Category.AIRPLANE, { name = name, task = "AWACS",
-    units = { { name = name .. "-1", type = acType, skill = "Excellent", x = x, y = z, alt = alt, alt_type = "BARO", speed = 180,
-      heading = 0, payload = { pylons = {}, fuel = 60000, chaff = 0, flare = 0, gun = 0 }, callsign = { 1, 1, 1 }, onboard_num = "01" } },
-    route = { points = { wp(x, z, alt, 180, { { enabled = true, auto = false, id = orbit.id, number = 1, params = orbit.params } }) } } })
-  log(string_format("SPAWN %s (%s) %s", name, acType, ok and "ok" or "FAILED"))
-  passive(name)
-  SENSORS[#SENSORS + 1] = name
-end
-local A50 = { x0 - 60000, z0 + 260000 }
-at(25, "AWACS", function()
-  awacs(BLUE, "PROBE AWACS E-3A", "E-3A", EWC[1] - 60000, EWC[2] - 40000, 9000)
-  awacs(RED, "PROBE AWACS A-50", "A-50", A50[1], A50[2], 9000)
-end)
-
--- red jets toward the EW cluster from ~300 km north-east (30,000 ft, 250 m/s: about 20 min to overhead)
-local RED_ID = { { 60, "Su-27" }, { 150, "MiG-29A" }, { 240, "MiG-31" }, { 330, "Tu-22M3" } }
-for i, j in ipairs(RED_ID) do
-  at(j[1], "ID lane " .. j[2], function()
-    local tx, tz = ewx or EWC[1], ewz or EWC[2]
-    local sx, sz = tx + 210000, tz + 210000 + (i - 1) * 8000
-    jets(coalition.side.RED, RED, "PROBE ID " .. j[2], j[2], 1, sx, sz, tx - 60000, tz - 60000 + (i - 1) * 8000, 30000 * FT, 250)
-  end)
-end
--- blue jets toward the A-50 from ~300 km south
-local BLUE_ID = { { 90, "F-16C_50" }, { 200, "F-15C" } }
-for i, j in ipairs(BLUE_ID) do
-  at(j[1], "ID lane " .. j[2], function()
-    local sx, sz = A50[1] - 300000, A50[2] + (i - 1) * 10000
-    jets(coalition.side.BLUE, BLUE, "PROBE ID " .. j[2], j[2], 1, sx, sz, A50[1] + 60000, A50[2] + (i - 1) * 10000, 30000 * FT, 250)
-  end)
-end
-
--- sampling: every 10 s, every sensor group; one DET line per (sensor, target) when first held or when flags change
-local detState = {}       -- "sensor|target" -> "vtd" flag string
-local function flag(b) return b and "1" or "0" end
-local function sensorPoint(g)
-  local u = g:getUnit(1)
-  if u and u:isExist() then return u:getPoint() end
-  return nil
-end
-local function sample(_, t)
-  safeCall("detections", function()
-    for i = 1, #SENSORS do
-      local g = Group.getByName(SENSORS[i])
-      if g and g:isExist() then
-        local sp = sensorPoint(g)
-        local dets = g:getController():getDetectedTargets() or {}
-        for k = 1, #dets do
-          local d = dets[k]
-          local obj = d.object
-          if obj and safeCat(obj) == Object.Category.UNIT and obj:isExist() then
-            local tname = safeName(obj)
-            local key = SENSORS[i] .. "|" .. tname
-            local flags = flag(d.visible) .. flag(d.type) .. flag(d.distance)
-            if detState[key] ~= flags then
-              local p = obj:getPoint()
-              local rkm = sp and dist(sp.x, sp.z, p.x, p.z) / 1000 or -1
-              log(string_format("DET sensor=%s target=%s (%s) range=%.1f km alt=%.0f ft visible=%s type=%s distance=%s%s",
-                SENSORS[i], tname, safeType(obj), rkm, p.y / FT, flag(d.visible), flag(d.type), flag(d.distance),
-                detState[key] and (" was " .. detState[key]) or " first"))
-              detState[key] = flags
-            end
-          end
-        end
-      end
-    end
-  end)
-  return t + 10
-end
-at(30, "ladder sites join the sensor list", function()
-  for _, s in ipairs(LADDER) do
-    if s.name then SENSORS[#SENSORS + 1] = s.name end
-  end
-end)
-timer_schedule(sample, nil, T0 + 35)
+local EWC = { x0 - 150000, z0 + 170000 }   -- flat desert used for the statics (run 6)
 
 -- ------------------------------------------------------------------ part C: statics
 -- static command posts, radios and power (type, category, shape as the DCS static list gives them) + two command
 -- vehicles as controls. Placed on flat ground 25 km south of the EW cluster, 250 m apart.
 local STATICS = {
   { ".Command Center", "Fortifications", "ComCenter" },
-  { "Bunker 1", "Fortifications", "dot" },
-  { "Military staff", "Fortifications", "aviashtab" },
   { "Shelter", "Fortifications", "ukrytie" },
-  { "Comms tower M", "Fortifications", "tele_bash_m" },
-  { "TV tower", "Fortifications", "tele_bash" },
-  { "GeneratorF", "Fortifications", "GeneratorF" },
-  { "Electric power box", "Fortifications", "tr_budka" },
 }
-local CMD_VEHICLES = { "Ural-375 PBU", "SKP-11" }
+local CMD_VEHICLES = {}
 local watched = {}        -- { name, kind = "static"|"unit", x, z, alive, life }
 local watchedByName = {}
 local sx0, sz0
@@ -452,7 +343,7 @@ at(15, "static API", function()
 end)
 
 -- explosions of rising power at each object until it dies (objects staggered 30 s apart, steps 20 s apart)
-local POWER = { 20, 60, 150, 400, 1000, 3000 }
+local POWER = { 20, 60, 150, 400, 1000, 3000, 3000, 3000, 3000, 3000, 3000, 3000, 3000, 3000 }
 local function blast(w, step)
   local o = objOf(w)
   if step > #POWER or not exists(o) or lifeOf(o) <= 0 then
@@ -539,9 +430,9 @@ world.addEventHandler(handler)
 local function status(_, t)
   safeCall("status", function()
     local tm = now()
-    for i, s in ipairs(LADDER) do
-      local ws = WINDOW_START + (i - 1) * WINDOW_LEN
-      if s.name and tm >= ws and tm < ws + WINDOW_LEN then
+    for _, s in ipairs(LADDER) do
+      local ws = s.t0
+      if s.name and tm >= ws and tm < ws + s.win then
         local g = Group.getByName(s.name)
         if g and g:isExist() then
           local dets = g:getController():getDetectedTargets() or {}
@@ -569,7 +460,6 @@ local function status(_, t)
 end
 timer_schedule(status, nil, T0 + WINDOW_START + 10)
 
-local ENDT = WINDOW_START + #LADDER * WINDOW_LEN + 120
-at(ENDT, string_format("END: phase 2 probe complete at %d min", math.floor(ENDT / 60 + 0.5)), function() end)
-log(string_format("phase 2 probe %s loaded: %d ladder sites, %d EW + 2 AWACS, %d statics + %d command vehicles, end t=%d s",
-  P.VERSION, #LADDER, #EW_TYPES, #STATICS, #CMD_VEHICLES, ENDT))
+local ENDT = tw + 120
+at(ENDT, string_format("END: probe run 7 complete at %d min", math.floor(ENDT / 60 + 0.5)), function() end)
+log(string_format("probe run 7 %s loaded: %d ladder sites, %d statics, end t=%d s", P.VERSION, #LADDER, #STATICS, ENDT))

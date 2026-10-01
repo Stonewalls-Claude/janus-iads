@@ -36,6 +36,10 @@ Where each request now lives:
 | (new) interface test | `tests/test_gci_api.lua` in Janus, with a reference consumer | The dcs-missions fake-link test (`harness_gci_handoff.lua` J) is retired with GCI 2.14.0 |
 | Parked | SRS channels for Soviet/Russian ground-post controllers | StonewallC standard update, GCI side |
 
+**Update 2026-09-30: the Janus side is built** (`src/janus_gci.lua`, final shapes in DESIGN §4.10 "Built").
+Start from `tests/test_gci_api.lua`: its reference consumer shows the pull / version check / pcall / fallback / one
+subscription per `instance` pattern, and `tests/bench/janus_gci_monitor.lua` is a working in-DCS example.
+
 Acceptance (section 5) stands, with two additions: GCI builds no picture of its own while Janus is usable, and the
 same bench runs clean with no GCI loaded. GCI 2.14.0 (the GCI session's work list) starts after Janus Phase 2.5
 lands.
@@ -180,3 +184,19 @@ network). Those remain the GCI's.
   `handOff`, `cfg.handoffMode`).
 - Tests: `dcs-missions/tests/harness_gci_handoff.lua`, section J (a fake ground source feeding the ground post).
 - Load test: `dcs-missions/missions/StonewallC_GCIMAX_TEST` (PC only) and `tests/harness_gcimax_test.lua`.
+
+## 7. Janus reply to the GCI follow-up (2026-09-30) - added to v1, no version bump
+- `commandNodes(coal)[i].reach`: each command node's air-ground radio reach in metres, from its own doctrine and radio
+  state (agReach up / not modelled, agBackup.range on backup, 0 with none; airborne nodes agReach).
+- `controlState(coal, point, postName)`: the optional third argument asks about that post only.
+- Contract test: a track's `id` is the DCS unit ID (`tests/test_gci_api.lua`).
+- AWACS naming: **Janus changed, the standard does not have to.** An airplane group made only of AWACS types is an
+  airborne command node whatever its name ("Magic AEW ACE" works; "AWACS ..." still works; tags in the name apply;
+  spawned-later groups are picked up the same way). The only rule left for the standard: an AWACS group holds AWACS
+  aircraft only (a mixed group with escorts needs the role word).
+
+## 8. Phase 2.5 closed (2026-09-30)
+The GCI session's bench (`dcs-missions/docs/design/GCI_JANUS.md` section 10) met every gate item: FULL / NOGCI /
+NOJANUS, 0 script errors each. Recorded in `docs/BENCH_RESULTS.md`; DESIGN section 9 marks Phase 2.5 done. Open
+from here: commit requests and weapons control (`JANUS.gci` Phase 4), SRS channels for Soviet ground posts (standard).
+

@@ -1,8 +1,73 @@
 # Changelog
 
+## Unreleased - Phase 4 started (2026-09-30)
+- New `janus_aaa.lua`: gun fire discipline per doctrine `aaa` - "free" (DCS default, every shipped profile) or
+  "trap" (flak trap: guns hold fire until a known target is inside 0.7 x their reach and below their ceiling, keep
+  firing 20 s after it left; a gun site with no picture at all fires at will). Guns now get EW cover / voice plots
+  like SAMs.
+- Doctrine `arm.observers = { range, smokeRange }`: ground spotters at every site see ARMs by eye (off in the shipped
+  profiles).
+- DCS 2.9.30 (horizon fix) retest (probe run 9, benches 04/05 run 3): slope limits, Hawk reach, identification and
+  ARM behaviour unchanged; unit database regenerated from the 2.9.30 datamine (no unit or figure changed).
+- Historical profiles after 1.0: Phase 6 Vietnam, Phase 7 Iran 1970s (Spellout / Peace Ruby), Phase 8 Iraq 1991 (Kari); DESIGN section 9 updated. `tests/test_phase4.lua`.
+
+## Unreleased - Phase 2.5 closed (2026-09-30)
+- GCI 2.14.1 / `StonewallC_gci_janus.lua` 1.1.0 ran on `JANUS.gci` v1 in the GCI session's bench (FULL, NOGCI,
+  NOJANUS; 0 script errors): picture, seats in command nodes, AEW takeover, SAM-zone avoidance, both fallbacks.
+
+## Unreleased - Phase 3: ARM defence (2026-09-30, closed; re-validation on DCS 2.9.30 queued)
+- New `janus_arm.lua` (DESIGN 4.5C): every passive-radar-guided weapon is an ARM; crews notice it only by radar
+  (tier A/B/C, crew, load, line of sight), by eye (optical units, daylight) or over the network; confirmation;
+  response ladder engage / accept ([hold]) / covered (trustPd) / finish the shot / dark for the estimated time to
+  impact; point defence forced up; suppression while an identified SEAD aircraft stays nose-on; restart or wait at
+  maxDark; early release when the network sees the missile die; suspicion cue; scoring (dark time, hits).
+- Doctrine field `arm` in every profile (SOVIET waits, RUSSIA_MODERN trusts Tor/Pantsir, US never dark on suspicion,
+  NVA blinks, third world slow). EMCON applies ARM decisions; WTA skips sites dark against an ARM.
+- Probe run 8: red AI does fire ARMs (Su-34 Kh-31P, Su-25T Kh-58U / Kh-25MPU, JF-17 LD-10); the Su-24M loadouts load
+  nothing; Patriot never shoots ARMs; ARM speeds updated. Bench 05 (Phase 3 gate) added.
+- `docs/requests/STANDARDS_JANUS.md`: the STANDARDS.md changes for when Janus replaces Skynet.
+- Test harness: weapons in flight (`F.launch`), deterministic random rolls (`F.rnd`), `land.isVisible`.
+- JANUS.gci additions (no version bump): `commandNodes[].reach` (radio reach per node and doctrine),
+  `controlState(coal, point, postName)`, contract check that track `id` is the DCS unit ID. AWACS groups are
+  recognised by aircraft type, so callsign-first names ("Magic AEW ACE") need no role word.
+
+## Unreleased - bench 04 / probe run 7 follow-ups (2026-09-30)
+- Bench 04 passed (Phase 2 gate). WTA fixes from it: a shooter keeps its channel for the target it is guiding (no
+  ping-pong); Hawk reach capped at 25 km and Patriot given 2 channels to match DCS.
+- Probe run 7: SA-5 slope limit 3 deg (`RPC_5N62V`, `S-200_Launcher`); SA-3 / SA-10 5 deg limits confirmed; static
+  Command Center and Shelter can be destroyed.
+
+## Unreleased - Phase 2.5: JANUS.gci ground-control interface (2026-09-30)
+- New `janus_gci.lua` (DESIGN 4.10): version, instance, keyed event subscriptions (nodeLost / nodeRestored /
+  nodeDegraded / authorityChanged), tracks (coalition or per command node), commandNodes, radarHeads, controlState,
+  samZones. Read-only copies; safe before start and with no network; Janus names no consumer.
+- Network fires restored / degraded / standdown callbacks (repair, power, link, equipment, alternate stand-down).
+- Doctrine: `fighterControl`, `awacsTakeover`, `agReach`, `agBackup.range`.
+- `tests/test_gci_api.lua` (68 checks) with a reference consumer (pull, version check, pcall, fallback, one subscription
+  per Janus instance); `tests/bench/janus_gci_monitor.lua` logs what a GCI would see (tag JANUS_GCIMON), loaded in
+  bench 04. Mutation check on janus_gci.lua and the network changes: all caught (equivalents marked).
+
+## Unreleased - Phase 2: static nodes, track picture, weapon-target assignment (2026-09-30)
+- Static objects named `CMD` / `COMMS` / `POWER` are network nodes (DESIGN 4.1A, 4.6B): death by S_EVENT_DEAD with the
+  5-s network pass as backstop, late statics picked up on BIRTH, wrong role words on statics reported.
+- Bare `[flag]` tags; `COMMS ... [ag]` air-ground radios with per-post state (own / ok / backup / none) and a `radio`
+  callback; backup link after relay loss (`linkBackup`: range, extra cue delay per tier); alternate command posts
+  (`[alt:Name]`, `altTakeover` per tier, stand-down when the main post returns, `takeover` callback).
+- Track picture: stable track numbers, class, velocity, holders, identification from the detection `type` flag or
+  after `idTime` of continuous network track; detections without any fix ignored.
+- New `janus_wta.lua`: envelope from DCS data, Pk estimate (range, aspect, speed, crew, ammo, lead), threat ranking,
+  assignment with salvo (`pkGoal`, `maxShooters`), channel limits, point-defence discount, hysteresis and logged
+  handoffs. On WTA networks EMCON cues only assigned batteries. GENERIC_THIRD_WORLD has WTA off.
+- New doctrine fields: `linkBackup`, `agRange`, `agBackup`, `altTakeover`, `idTime`, `wta`.
+- Tests: `tests/test_phase2.lua` (146 checks); mutation check 296/296 on the changed lines. Bench 04 built
+  (`tests/bench/JANUS_BENCH_04.miz`), not run yet.
+- `docs/HANDOFF_AI_REALISM.md`: DCS AI weirdness, gotchas and SEAD ideas for the AI realism session.
+
 ## Unreleased - Phase 2 fixes from bench 01 (2026-09-27)
-- Probe run 6 built (`tests/probe/JANUS_PROBE_P2.miz`, not run yet): level ladder for SAM launches on sloped
-  ground, sensor identification (`type` flag), static command posts / radios / power and their death events.
+- Probe run 6 (`tests/probe/JANUS_PROBE_P2.miz`, run 2026-09-30): level ladder for SAM launches on sloped ground,
+  sensor identification (`type` flag), static command posts / radios / power and their death events.
+- Setup slope check from probe run 6: SA-2 limit 2 -> 3 deg; new limits SA-3 5 deg and SA-10 5 deg (radars and
+  launchers); Hawk stays 2; SA-6, SA-11 and Patriot fire on 10-26 deg and get none.
 - Probe scripts follow the new dcs-check drift rule (reschedule from the callback's time, not the clock);
   `tools/build_probe_miz.py` accepts a probe .miz as its template.
 - EW feed after command loss is now doctrine-driven (`c2LossCue`, DESIGN 8A): SOVIET_PVO_1985 / RUSSIA_MODERN /

@@ -59,12 +59,19 @@ local function checkDependencies(site)
 end
 
 -- DCS unit types that will not engage from sloped ground, with the steepest slope (degrees) they tolerate.
--- Probe run 4 (2026-09-29): a full Hawk battery on 12-32 deg ground detected its targets but its tracking radar
--- never locked and it never fired; the same battery on <= 1.3 deg ground fired every time. ED: keep Hawks under ~2 deg.
--- Probe run 5 (2026-09-29): an SA-2 on 11-32 deg ground never tracked or fired; SA-2s on <= 1.6 deg fired every time,
--- whatever their heading. The SA-2 threshold between those is not measured yet; 2 deg is used, like the Hawk.
+-- Probes 4-6 (2026-09-29/30, docs/PROBE_RESULTS.md): every unit of a site on the measured band.
+--   Hawk: fires <= 1.3, mute 3.0-3.5 and above                         -> 2
+--   SA-2: fires <= 3.25, mute 4.8-6.1 and above                        -> 3
+--   SA-3: fires 3.1-5.0, mute 11.9-19.9 (5-11.9 not measured)           -> 5
+--   SA-10: fires 3.1-4.8, mute 13.6-22.3, radars never came on (4.8-13.6 not measured) -> 5
+--   SA-6 (13.7-26.5), SA-11 (10.2-17.2), Patriot (10.9-13.7) fired: no limit found, none set.
+-- Probe run 7 (2026-09-30): SA-5 fires <= 3.4, mute 5.1-6.4 and above -> 3; SA-3 mute 6.9-7.9 and SA-10 mute 6.5-8.7
+-- confirm their 5 deg limits.
 M.SLOPE_LIMITS = { ["Hawk ln"] = 2, ["Hawk tr"] = 2, ["Hawk sr"] = 2, ["Hawk cwar"] = 2,
-                   ["SNR_75V"] = 2, ["S_75M_Volhov"] = 2 }
+                   ["SNR_75V"] = 3, ["S_75M_Volhov"] = 3, ["RPC_5N62V"] = 3, ["S-200_Launcher"] = 3,
+                   ["snr s-125 tr"] = 5, ["5p73 s-125 ln"] = 5,
+                   ["S-300PS 40B6M tr"] = 5, ["S-300PS 64H6E sr"] = 5, ["S-300PS 40B6MD sr"] = 5,
+                   ["S-300PS 5P85C ln"] = 5, ["S-300PS 5P85D ln"] = 5 }
 
 -- Terrain slope (degrees) under a point, central differences over 30 m.
 local function slopeAt(p)
@@ -135,6 +142,25 @@ local function inspectGroup(group, parsed, coa)
 end
 M.inspectGroup = inspectGroup
 
+-- Command posts, radios and power plants can be DCS static objects (DESIGN 4.1A): a bunker named "CMD Hama", a
+-- comms tower "COMMS Hama [ag]", a generator "POWER Plant 2". Any static type works; probe run 6 checked
+-- .Command Center, Bunker 1, Military staff, Shelter, Comms tower M, TV tower, GeneratorF and Electric power box.
+local STATIC_ROLES = { CMD = true, COMMS = true, POWER = true }
+M.STATIC_ROLES = STATIC_ROLES
+
+local function inspectStatic(obj, parsed, coa)
+  local t = obj:getTypeName()
+  local site = {
+    name = parsed.name, label = parsed.label, roleWord = parsed.role, tags = parsed.tags,
+    coalition = coa, static = obj, group = nil, units = {}, roles = { STATIC = 1 }, problems = {}, notes = {},
+  }
+  site.units[1] = { unit = obj, rec = { type = t, role = "STATIC", name = t }, name = parsed.name }
+  local ok, life = pcall(obj.getLife, obj)
+  site.notes[#site.notes + 1] = string_format("static '%s', life %s", t, ok and tostring(life) or "?")
+  return site
+end
+M.inspectStatic = inspectStatic
+
 -- Scan both coalitions. Returns the list of sites and fills M.report (lines of plain English).
 function M.scan()
   M.sites = {}
@@ -143,15 +169,29 @@ function M.scan()
   local counts = { red = 0, blue = 0 }
 
   local cats = { Group.Category.GROUND, Group.Category.SHIP, Group.Category.AIRPLANE }
+  local wrongStatics = {}
   for _, coa in ipairs({ coalition.side.RED, coalition.side.BLUE }) do
     local coaName = U.coalitionName[coa]
+    local statics = coalition.getStaticObjects and coalition.getStaticObjects(coa) or {}
+    for i = 1, #statics do
+      local obj = statics[i]
+      if U.alive(obj) then
+        local parsed = N.parse(obj:getName())
+        if parsed and STATIC_ROLES[parsed.role] then
+          M.sites[#M.sites + 1] = inspectStatic(obj, parsed, coa)
+          counts[coaName] = counts[coaName] + 1
+        elseif parsed then
+          wrongStatics[#wrongStatics + 1] = { name = obj:getName(), coalition = coaName, role = parsed.role }
+        end
+      end
+    end
     for _, cat in ipairs(cats) do
       local groups = coalition.getGroups(coa, cat) or {}
       for i = 1, #groups do
         local group = groups[i]
         if U.alive(group) then
           local name = group:getName()
-          local parsed = N.parse(name)
+          local parsed = N.parseGroup(group)
           if parsed then
             local site = inspectGroup(group, parsed, coa)
             M.sites[#M.sites + 1] = site
@@ -200,6 +240,10 @@ function M.scan()
       end
     end
   end
+  for _, w in ipairs(wrongStatics) do
+    add(lines, string_format("  [%s] static '%s' starts with %s, but only CMD, COMMS and POWER can be static objects - Janus ignores it",
+      w.coalition, w.name, w.role))
+  end
   local dlcs = {}
   for _, site in ipairs(M.sites) do
     if site.dlc then dlcs[site.dlc] = true end
@@ -234,7 +278,7 @@ function M.start(opts)
   M.safe("setup.report", M.printReport)
   M.startEvents()
   -- Phase modules, in dependency order. Each is optional so a partial build still runs.
-  for _, mod in ipairs({ "net", "tracks", "emcon", "debugview" }) do
+  for _, mod in ipairs({ "net", "tracks", "wta", "emcon", "arm", "aaa", "gci", "debugview" }) do
     if M[mod] and M[mod].start then M.safe("setup.start." .. mod, M[mod].start) end
   end
   M.startScheduler()

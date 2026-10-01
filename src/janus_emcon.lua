@@ -66,7 +66,7 @@ local function updateCoverage(net)
   local fbMode = fb.mode or "none"
   local fbRange = fb.range or 0   -- mutate: ok every profile sets range; custom tables without one get no feed
   for _, n in ipairs(net.nodes) do
-    if n.kind == "BATTERY" or n.kind == "PD" then
+    if n.kind == "BATTERY" or n.kind == "PD" or n.kind == "AAA" then   -- guns get plots too (AAA fire discipline)
       local via, feeders = nil, nil
       if n.pos then
         if n.linked then
@@ -136,11 +136,21 @@ function E.want(n, policy, now)
   if policy == "rotating" then return rotatingOn(n, now), "rotating" end
   local reach = (n.engageRange > 0 and n.engageRange or n.detectionRange) * d.cueFactor
   if policy == "cued" then
-    local tr, dist = M.tracks.nearest(n, reach)
+    local tr, dist
+    local byWta = n.net.wtaActive and n.linked and not n.autonomous and M.wta ~= nil
+    if byWta then
+      tr, dist = M.wta.targetFor(n)           -- a WTA network cues only the shooters it assigned (DESIGN 4.3)
+    else
+      tr, dist = M.tracks.nearest(n, reach)
+    end
     if tr then
       em.cuedAt = em.cuedAt or now
       em.lastCue = now
-      local delay = (d.cueDelay[n.tier] or d.cueDelay.REG) + (n.feedDelay or 0)  -- mutate: ok coverage always sets feedDelay; tiers always present
+      local delay = (d.cueDelay[n.tier] or d.cueDelay.REG) + (n.feedDelay or 0) + (n.linkDelay or 0)  -- mutate: ok coverage always sets feedDelay; tiers always present
+      if byWta then
+        if now - em.cuedAt >= delay then return true, string_format("assigned %s, %.0f km", M.tracks.label(tr), dist / 1000) end  -- mutate: ok km in the log text
+        return em.on == true, "cue pending"
+      end
       if now - em.cuedAt >= delay then return true, string_format("cued, track %.0f km", dist / 1000) end
       return em.on == true, "cue pending"
     end
@@ -225,13 +235,16 @@ function E.tick()
         em.policy = policy
       end
       local want, reason = E.want(n, policy, now)
+      local armWant, armReason
+      if M.arm and policy ~= "offline" then armWant, armReason = M.arm.override(n, now) end   -- mutate: ok an offline node is never covered or engaging, and dark is dark
+      if armWant ~= nil then want, reason = armWant, armReason end
       if em.on == nil then
         apply(n, want, reason, now)                               -- first decision: no timing rules
       elseif want and not em.on then
         local ready = em.offSince + restartTime(n)
         if now >= ready then apply(n, true, reason, now) end
       elseif not want and em.on then
-        local forced = policy == "offline" or policy == "dark"
+        local forced = policy == "offline" or policy == "dark" or armWant == false
         if not forced and missilesInFlight(n, now) then
           if not em.holding then
             em.holding = true

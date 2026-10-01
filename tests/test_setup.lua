@@ -150,8 +150,14 @@ do
     { type = "Hawk sr", x = 0, z = 1000 }, { type = "Hawk tr", x = 100, z = 1000 }, { type = "Hawk pcp", x = 0, z = 1200 },
     { type = "Hawk ln", x = 200, z = 1000 } } }
   F.addGroup{ name = "SAM SA-6 Hill", units = { { type = "Kub 1S91 str", x = 5000, z = 60000 }, { type = "Kub 2P25 ln", x = 5100, z = 60000 } } }
-  for _, t in ipairs({ "Hawk ln", "Hawk tr", "Hawk sr", "Hawk cwar", "SNR_75V", "S_75M_Volhov" }) do
+  -- probe run 6 limits: every limited type once on 3 deg ground and once on 8 deg ground
+  local LIMITS = { ["Hawk ln"] = 2, ["Hawk tr"] = 2, ["Hawk sr"] = 2, ["Hawk cwar"] = 2, ["SNR_75V"] = 3, ["S_75M_Volhov"] = 3,
+    ["RPC_5N62V"] = 3, ["S-200_Launcher"] = 3,
+    ["snr s-125 tr"] = 5, ["5p73 s-125 ln"] = 5, ["S-300PS 40B6M tr"] = 5, ["S-300PS 64H6E sr"] = 5,
+    ["S-300PS 40B6MD sr"] = 5, ["S-300PS 5P85C ln"] = 5, ["S-300PS 5P85D ln"] = 5 }
+  for t in pairs(LIMITS) do
     F.addGroup{ name = "SAM One " .. t, coalition = coalition.side.BLUE, units = { { type = t, x = 20000, z = 60000 } } }
+    F.addGroup{ name = "SAM Steep " .. t, coalition = coalition.side.BLUE, units = { { type = t, x = 20000, z = 90000 } } }
   end
   local J = load()
   F.run(3)
@@ -164,10 +170,21 @@ do
   check(pr ~= nil and pr:find("'Hawk ln' stands on a 8.0 deg", 1, true) ~= nil, "worst unit reported (" .. tostring(pr) .. ")")
   check(slopeProblem(byName["SAM Hawk Flat"]) == nil, "Hawk on flat ground not reported")
   check(slopeProblem(byName["SAM SA-6 Hill"]) == nil, "types without a slope limit not reported")
-  for _, t in ipairs({ "Hawk ln", "Hawk tr", "Hawk sr", "Hawk cwar", "SNR_75V", "S_75M_Volhov" }) do
+  for t, lim in pairs(LIMITS) do
+    check(J.SLOPE_LIMITS[t] == lim, t .. " limit is " .. lim .. " (probe run 6)")
     local p3 = slopeProblem(byName["SAM One " .. t])
-    check(p3 ~= nil and p3:find("3.0 deg", 1, true) ~= nil, t .. " on 3 deg ground reported (limit 2)")
+    if lim < 3 then
+      check(p3 ~= nil and p3:find("3.0 deg", 1, true) ~= nil, t .. " on 3 deg ground reported (limit " .. lim .. ")")
+    elseif lim > 3 then
+      check(p3 == nil, t .. " on 3 deg ground not reported (limit " .. lim .. ")")
+    end  -- lim == 3 on 3 deg ground is the boundary (float), pinned by the 8 deg check below
+    local p8 = slopeProblem(byName["SAM Steep " .. t])
+    check(p8 ~= nil and p8:find("8.0 deg", 1, true) ~= nil and p8:find("about " .. lim .. " deg", 1, true) ~= nil,
+      t .. " on 8 deg ground reported with its limit")
   end
+  local n = 0
+  for _ in pairs(J.SLOPE_LIMITS) do n = n + 1 end
+  check(n == 15, "no untested slope limits")
   check(math.abs(J.slopeAt({ x = 0, z = 70000 }) - 3) < 0.01 and J.slopeAt({ x = 0, z = 0 }) == 0, "slopeAt measures degrees")
   check(F.logContains("stands on a 8.0 deg slope"), "slope problem in the setup report")
   land.getHeight = flatHeight

@@ -239,7 +239,7 @@ end)
 world.addEventHandler(handler)
 
 -- every 60 s: Janus node states and emitting seconds (read-only use of the shared namespace)
-local function summary()
+local function summary(_, t)
   safeCall("summary", function()
     if not (JANUS.net and JANUS.net.list) then return end
     local parts = {}
@@ -251,7 +251,7 @@ local function summary()
     end
     log("NODES " .. table.concat(parts, " | "))
   end)
-  return timer_getTime() + 60
+  return t + 60
 end
 timer_schedule(summary, nil, timer_getTime() + 60)
 at(1800, "END: bench 02 complete at 30 min", function() end)

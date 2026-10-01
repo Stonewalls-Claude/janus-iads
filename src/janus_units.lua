@@ -1,5 +1,5 @@
 -- GENERATED FILE - do not edit. Built by tools/build_unitdb.py
--- Sources: DCS Lua datamine (DCS 2.9.29.27278, git fe1d800 2026-08-27) + DCS Olympus unit databases (git bb16683 2026-06-04)
+-- Sources: DCS Lua datamine (DCS 2.9.30.28536, git fdd11ed 2026-10-01) + DCS Olympus unit databases (git bb16683 2026-06-04)
 -- Lua 5.1. One table: JANUS.UnitDB[typeName] -> record. See docs/UNIT_DATA_REPORT.md
 JANUS = JANUS or {}
 JANUS.UnitDB = {
@@ -3672,4 +3672,4 @@ JANUS.UnitDB = {
     olympusCoalition = "red"
   },
 }
-JANUS.UnitDBMeta = { dcsVersion = "2.9.29.27278", datamine = "fe1d800 2026-08-27", olympus = "bb16683 2026-06-04", count = 179 }
+JANUS.UnitDBMeta = { dcsVersion = "2.9.30.28536", datamine = "fdd11ed 2026-10-01", olympus = "bb16683 2026-06-04", count = 179 }

@@ -109,3 +109,129 @@ Kills: 4 Su-24M by Hawks (first Hawk kills under Janus), 4 F-16C (Tor 2, SA-6 2)
 2. **The SA-2 has never launched in any bench** (01, 02, 03), although cued with tracks inside its envelope for minutes.
    Next probe: SA-2 alone in plain DCS (flat vs our placement, with/without Janus switching), like the Hawk probe.
 3. The missile-in-flight hold has not been needed in three benches; it stays harness-proven only.
+
+## Bench 04 - Phase 2 gate (2026-09-30, `JANUS_BENCH_04.miz` + JANUS.gci monitor) - PASS
+z690, queue job `20260930-114225`, loaded 12:14 UTC, END 12:36 (t=1320), then paused. **0 Janus errors** (also 0 from
+the bench and the monitor). Log: `I:\Claude-Workspace\logs\janus_bench04_20260930.log`. A first attempt at 11:29
+was aborted after 150 s by the test queue (a new .miz copied into Missions - see HANDOFF_AI_REALISM.md).
+
+| Check | Expected | Seen | Result |
+|---|---|---|---|
+| Statics as nodes | 5 red statics become C2 / COMMS / POWER nodes | setup lists all five with type and life; network built as designed | pass |
+| Relay destroyed (t=420) | SA-3 West unlinked (130 km: no backup), autonomous after 180 s | "lost its link" at 423, autonomous at ~603; relinked when the reserve post took over (783) | pass |
+| Generator destroyed (480) | EW East on 300 s reserve, then dark | reserve at 483, "out of power" at 783 | pass |
+| Air-ground radio destroyed (540) | post's radio -> backup | "air-ground radio: backup" at 543; monitor COMMAND shows radio backup | pass |
+| Command post destroyed (600) | every battery / EW / AWACS unlinked; CMD Bunker Reserve takes over after 180 s | all unlinked at 603; "takes over command" at 783; SAMs relinked the same second | pass |
+| Track picture | types from the AWACS, class only after the AWACS was cut off | TRACKS lines F-16C_50 / Su-24M / E-3A / A-50 from the start; after 600 new tracks appeared as "fixed-wing" until identified | pass |
+| WTA | best battery assigned, others dark; handoffs logged | 49 assignment / handoff lines; salvo (SA-10 + SA-11 on one F-16, SOVIET pkGoal 0.85); "out of missiles" for Patriot and SA-11 | pass, see 1 |
+| JANUS.gci | monitor reads heads, command nodes, tracks, zones, control, events | every 60 s; events nodeLost / nodeDegraded / nodeRestored / authorityChanged at the right times | pass |
+
+Shots: SA-11 South 12, Patriot 8, SA-3 West 3, SA-10 Centre 2 (25). Hits on 5 of 8 blue F-16C (SA-11 4, SA-3 2
+aircraft). **Patriot: 8 PAC-2 at the two Su-24M of wave A, no hit. Hawk: never fired.**
+
+Findings:
+1. **Handoff ping-pong (fixed after the run).** Blue's two Su-24M swapped between Patriot and Hawk every 2 s (18
+   "handed" lines): the Patriot has one channel in the unit data, so whichever target ranked first took it. WTA now
+   keeps a shooter's channel for the target it is already guiding (test added), and uses 2 Patriot channels
+   (DCS fired at both Su-24M 3 s apart).
+2. **The Hawk was assigned targets it cannot reach in DCS**: the Su-24M route passed ~50 km from it; its data reach is
+   45 km but DCS launches only after the TR locks at 13-15 nm (probe run 4). WTA now caps the Hawk at 25 km.
+3. The Patriot's 8 misses on unarmed, non-manoeuvring Su-24M at 15,000 ft are a DCS matter (AI realism hand-off).
+4. The 3000 kg blasts on statics also destroyed map scenery (power lines etc.): dozens of `S_EVENT_DEAD` with
+   category 5 (SCENERY). Janus ignores them; noted for mission makers.
+5. After the reserve post took over, the A-50 stayed "in command" as an airborne node while unlinked (t=603-783) -
+   by design; a GCI applies `awacsTakeover` from the doctrine (SOVIET: no).
+
+**Phase 2 gate met** (static nodes degrade as designed; track picture, WTA and handoffs work; no Janus errors).
+
+## Bench 05 - Phase 3 gate, run 1 (2026-09-30, `JANUS_BENCH_05.miz`) - works, fixes made
+Blue HARM (2 waves of 2 F-16C, 4x AGM-88C) and Shrike (F-4E) SEAD against the red SOVIET_PVO network (SA-10 + Tor,
+SA-11, SA-6, SA-2, 55G6); red Kh-31P SEAD (2 waves of 1 Su-34) against the blue US_MODERN network (Patriot, Hawk,
+FPS-117); unarmed bait so the SAMs come up. z690, queue job `20260930-134146`, 20 min, **0 Janus errors**. Log:
+`I:\Claude-Workspace\logs\janus_bench05_20260930.log`.
+
+| | Red network (blue ARMs) | Blue network (red ARMs) |
+|---|---|---|
+| ARMs fired | 16 AGM-88C, 2 AGM-45A | 4 Kh-31P |
+| Seen by the crews | every one that came within sensor range: radar 27-55 km (SA-11, SA-10), 8-10 km (Tor radar and eyes), 2-sensor confirmations | all 4 (Hawk 11-25 km, Patriot 46 km, FPS-117 91-121 km: too far, see fix 2) |
+| Responses | dark (SA-11 x6, SA-10 x3, SA-2, SA-6, EW), "finish the shot" (SA-11 x4, SA-10), Tor "engage" (5 missiles), suspicion (F-16C / F-4E nose-on: SA-10, SA-11, SA-2) | dark (Hawk x2, Patriot, FPS-117), Patriot "finish the shot" |
+| ARM hits on radars | 5: SA-11 LN x2 and SR (**all three while dark**), SA-11 LN (dark), Tor (up, engaging: destroyed) | **0**: every Kh-31P missed a dark Hawk (331 m, 885 m, 6 km) or was lost |
+| Point defence | Tor fired 5 SA9M330 at HARMs and 1 at a Shrike; one HARM ended 3.6 km short (shot down); Tor killed the F-4E | - |
+| Emitting time lost | 1,561 s over 6 sites (20 dark periods) | 509 s over 3 sites |
+
+Findings:
+1. **DCS AGM-88C hits radars that went dark** (4 of 5 hits were on dark SA-11 radars, dark 20-70 s before impact),
+   as in benches 01-02; **Kh-31P does not** (probe run 8 and here: 0 of 4). Going dark saves a site from red ARMs but
+   not from blue HARMs in DCS 2.9.29; against HARMs it still suppresses (no new launches at a dark site) and point
+   defence is what saves the radar. Noted for the AI realism hand-off.
+2. **Janus fix: too many sites went dark for one missile.** The threat cone reached far past the targeted site: an SA-6
+   30 km behind the SA-11 was dark 354 s, the 55G6 261 s, the Patriot 179 s for a Kh-31P aimed at the Hawk. Now a
+   missile threatens only radars within 10 km beyond the first emitter on its path (fixed per missile, emitting or
+   dark for < 120 s), and nobody once it is past that radar (DESIGN 4.5C).
+3. **Janus fix: sight range.** The FPS-117 "held" a Kh-31P at 121 km (0.35 x its 470 km range). No radar now holds an
+   ARM beyond 50 km.
+4. The "finish the shot" rung worked (SA-11 kept guiding its Buks, then went dark 20-40 s before impact).
+5. Suspicion cues fired against F-16C and F-4E nose-on at 11-57 km (30 s dark each, extended while nose-on).
+6. The WTA "no shooter" / reassignments during ARM dark periods worked (a dark site got no targets).
+
+## Bench 05 - Phase 3 gate, run 2 (2026-09-30, `JANUS_BENCH_05B.miz`, with the run-1 fixes)
+Same mission, queue job `20260930-140509`, 20 min, **0 Janus errors**. Log:
+`I:\Claude-Workspace\logs\janus_bench05b_20260930.log`. DCS 2.9.29.27468.
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| ARMs fired | 22 | 20 |
+| Emitting time lost (red / blue) | 1,561 s / 509 s | **605 s / 171 s** |
+| Sites dark for a missile aimed elsewhere | SA-6 354 s, 55G6 261 s, Patriot 179 s, FPS-117 224 s | **none** (only the targeted site, and the SA-2 / Hawk a HARM or Kh-31P was really heading for) |
+| ARM hits on radars | 5 (4 on dark radars) | 8 (7 on dark radars): SA-11 SR x2, SA-2 P-19 x2, Hawk sr / tr x3 (Kh-31P), 1 more on the SA-11 |
+| Tor | engaged 5 missiles, downed 1 HARM, destroyed by a HARM | engaged the HARM at the SA-10 |
+
+Findings:
+1. The run-1 fixes work: no collateral dark periods, a third of the lost emitting time.
+2. Hits on dark radars came from **late awareness**, not from Janus holding sites up: the SA-2 (tier C) and the Hawk
+   learned of their missiles 9 s out (no sensor within reach earlier; the 50 km cap now keeps the FPS-117 from
+   "seeing" a Kh-31P at 120 km), and a missile 9 s out hits whether or not the radar is on. Where the crew knew
+   early (SA-11 x3, SA-10), HARMs still hit dark SA-11s: the DCS AGM-88 behaviour noted in run 1.
+3. **Gate status:** the Janus side works in both runs (awareness, confirmation, ladder, finish-the-shot, point
+   defence, suppression, scoring, no errors). Against HARMs, DCS 2.9.29 gives going dark little protective value, so
+   the defensive benefit Janus can add is suppression and point defence until relocation/decoys (parked) exist.
+
+**DCS update pending (owner, 2026-09-30):** the latest DCS patch fixes SAM acquisition below the horizon. Both bench
+05 runs, probes 4-8 and the slope limits were measured on 2.9.29.27468 or earlier. After the server updates: rerun the
+slope ladders (probe runs 6-7: the "sloped ground mutes SAMs" finding may have been this bug, so
+`SLOPE_LIMITS` may shrink or go), probe run 4 (Hawk short range), and benches 04/05; regenerate the unit database
+from the new datamine.
+
+## Phase 2.5 gate - GCI on JANUS.gci (2026-09-30, run by the GCI session) - PASS
+Source: `dcs-missions/docs/design/GCI_JANUS.md` section 10 (GCI session's bench `missions/StonewallC_GCIJ_BENCH`,
+built with `build_gcij_bench.py`; dedicated server via dcs-testq). Janus bench 04's network with `[seats:N]` posts and
+StonewallC-named AEWs (`Mainstay AEW VET`, `Darkstar AEW ACE` - recognised by type, no "AWACS" word), GCI DCA flights
+both sides, transits; red post killed at 600 s, blue CRC at 840 s. Three builds, 25 min each, **0 script errors in
+all three**.
+
+| Gate item (DESIGN section 9, 2.5) | Result |
+|---|---|
+| GCI runs on the Janus picture, no picture of its own | FULL: picture source "janus" all run, no flat post, both AEWs are Janus controllers |
+| Seats sit in Janus command nodes and fall silent when their node dies | North's 3 seats up; flights released to the A-50 when North's radio fell to backup (543 s); seats closed 5 s after the post died; Reserve took over at 785 s with 3 seats; blue CRC dead -> E-3 took the full workload, no blue ground seats |
+| Fighters keep out of live SAM zones | FULL: 0 fighter entries into any hot SAM zone (NOGCI, for comparison: one uncontrolled fighter drifted 0.1 NM into its own SA-10 zone) |
+| The same bench runs clean with no GCI loaded | NOGCI: Janus alone, 0 errors, nothing talked to fighters |
+| (GCI fallback) runs with no Janus loaded | NOJANUS: GCI's own picture, flat posts GROUND:1 / GROUND:2 plus both AEWs, fighters controlled, 0 errors |
+
+FULL scored 8 PASS and 1 FAIL; the FAIL was the bench's own timing (an A-50 "gap" sample taken 3 s before Janus's
+`nodeLost` event read "full"; every later sample was right; fixed in the GCI test 1.0.1). Note for consumers: a
+destroyed **group** node reaches `nodeLost` on Janus's next network pass (up to 5 s after `S_EVENT_DEAD`); a static
+node's `S_EVENT_DEAD` is handled at once. Subscribe to the event rather than sampling on a clock.
+
+## Benches 04 (run 3) and 05 (run 3) on DCS 2.9.30 (2026-09-30)
+Current Janus (Phase 3 included), DCS 2.9.30.28536, queue jobs `20260930-213948-*`, **0 Janus errors** in both.
+Logs `I:\Claude-Workspace\logs\janus_bench0{4,5}_dcs2930_20260930.log`.
+
+- **Bench 04:** same degradation path as run 2 (relay -> SA-3 autonomous, generator -> EW out of power, radio ->
+  backup, post -> reserve takes over; 4 nodeLost / 1 authorityChanged GCI events). Shots: SA-11 12, Patriot 8 (one
+  Su-24M hit this time), SA-10 5, SA-3 2; Hawk 0 (assigned once at 14 km, inside its 25 km DCS reach, then handed back
+  to the Patriot). **Handoff lines 20 -> 2: the bench-04 ping-pong fix holds in DCS.**
+- **Bench 05 (Phase 3 re-validation):** 19 ARMs; red sites went dark 15 times (872 s lost), blue 3 times (198 s);
+  5 radar hits (4 on dark radars: SA-11 x2, SA-2 x2; the Tor while engaging), 0 on blue; the Tor fired 5 times at
+  missiles and one HARM ended 3.3 km short. Same picture as run 2: Janus behaves as designed; DCS HARMs still hit dark
+  radars, Kh-31Ps still miss dark Hawks.
+

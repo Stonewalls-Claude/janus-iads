@@ -1,6 +1,9 @@
--- Janus IADS - track picture, Phase 1 (DESIGN 4.2, first part): aircraft seen by the network's emitting radars.
--- Budgeted round-robin polling of Controller:getDetectedTargets(); weapons are ignored here (the ARM awareness
--- model of DESIGN 4.5A handles them in Phase 3, because DCS's own weapon detection is far too generous).
+-- Janus IADS - track picture (DESIGN 4.2): aircraft seen by the network's emitting radars, fused per network and kept
+-- per radar. Budgeted round-robin polling of Controller:getDetectedTargets(). A track has a number, class
+-- (fixed-wing / helicopter), position, velocity, the sensors holding it and, once identified, the DCS type name:
+-- identified when a sensor reports the detection `type` flag (probe run 6: AWACS, SA-6, SA-11 do; ground EW never)
+-- or, on the network picture, after the doctrine's idTime of continuous track. Weapons are ignored here (the ARM
+-- awareness model of DESIGN 4.5A handles them in Phase 3, because DCS's own weapon detection is far too generous).
 
 JANUS = JANUS or {}
 local M = JANUS
@@ -15,6 +18,9 @@ T.BUDGET = 6            -- sensors polled per 1-s tick (spread the cost)
 T.TTL = 20              -- a track not refreshed for this long is dropped
 T.cursor = 1
 T.stats = { polls = 0 }
+T.numbers = {}          -- DCS object id -> track number (stable across pictures)
+T.seq = 0
+T.CLASS = { [0] = "fixed-wing", [1] = "helicopter" }
 
 local AIR = { [0] = true, [1] = true }   -- Unit.Category AIRPLANE, HELICOPTER
 
@@ -23,17 +29,42 @@ local function isSensor(n)
 end
 T.isSensor = isSensor
 
-local function store(picture, obj, pos, now, node)
+local function identify(tr, obj, by, now)
+  local ok, t = pcall(obj.getTypeName, obj)
+  if ok and t then   -- mutate: ok getTypeName never returns nil
+    tr.typeName, tr.typeKnown, tr.idBy, tr.idAt = t, true, by, now
+  end
+end
+
+-- det: the detection entry (its `type` flag); dwell: seconds of continuous track that identify it anyway (nil = never)
+local function store(picture, obj, pos, now, node, det, class, dwell)
   local id = obj.getID and obj:getID() or tostring(obj)
   local tr = picture[id]
   if not tr then
-    tr = { id = id, obj = obj, first = now, sensors = {} }
+    local num = T.numbers[id]
+    if not num then
+      T.seq = T.seq + 1
+      num = T.seq
+      T.numbers[id] = num
+    end
+    tr = { id = id, num = num, obj = obj, first = now, sensors = {}, class = class, typeKnown = false }
     picture[id] = tr
+  elseif tr.pos and now > tr.t then
+    local dt = now - tr.t
+    tr.vel = { x = (pos.x - tr.pos.x) / dt, y = (pos.y - tr.pos.y) / dt, z = (pos.z - tr.pos.z) / dt }
   end
   tr.pos, tr.t = pos, now
   tr.sensors[node.name] = now
+  if not tr.typeKnown then
+    if det and det.type then
+      identify(tr, obj, node.name, now)
+    elseif dwell and now - tr.first >= dwell then
+      identify(tr, obj, "held " .. math.floor(now - tr.first) .. " s", now)
+    end
+  end
   return tr
 end
+T.store = store
 
 function T.poll(node, now)
   node.lastPoll = now
@@ -46,16 +77,21 @@ function T.poll(node, now)
   local n = 0
   node.localTracks = node.localTracks or {}
   for i = 1, #dets do
-    local obj = dets[i].object
-    if obj and obj.isExist and obj:isExist() and Object.getCategory(obj) == Object.Category.UNIT then
+    local det = dets[i]
+    local obj = det.object
+    -- a detection with neither a visual nor a range fix gives no position worth tracking (run 6: A-50 on the E-3)
+    local fix = det.visible ~= false or det.distance ~= false
+    if fix and obj and obj.isExist and obj:isExist() and Object.getCategory(obj) == Object.Category.UNIT then  -- mutate: ok defensive checks on DCS detection data
       local ocoa = obj:getCoalition()
       local desc = obj:getDesc()
       if ocoa ~= coa and ocoa ~= 0 and desc and AIR[desc.category] then
         local pos = obj:getPoint()
-        store(node.localTracks, obj, pos, now, node)
+        local class = T.CLASS[desc.category]
+        store(node.localTracks, obj, pos, now, node, det, class, nil)
         if node.linked then
           node.net.tracks = node.net.tracks or {}
-          store(node.net.tracks, obj, pos, now, node)
+          local it = node.net.doctrine.idTime
+          store(node.net.tracks, obj, pos, now, node, det, class, it and (it[node.tier] or it.REG))
         end
         n = n + 1
       end
@@ -115,6 +151,18 @@ function T.nearest(node, range)
   end
   scan(node.localTracks)
   return best, bestD and math.sqrt(bestD)
+end
+
+-- Plain list of a picture's tracks (for logs and the GCI interface later).
+function T.list(picture)
+  local out = {}
+  for _, tr in pairs(picture or {}) do out[#out + 1] = tr end
+  table.sort(out, function(a, b) return a.num < b.num end)
+  return out
+end
+
+function T.label(tr)
+  return string.format("T%d %s", tr.num, tr.typeKnown and tr.typeName or (tr.class or "unknown"))
 end
 
 function T.start()
