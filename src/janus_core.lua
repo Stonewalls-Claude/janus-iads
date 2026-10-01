@@ -27,6 +27,13 @@ M.defaults = {
   LOG_LEVEL = 2,             -- 0 errors only, 1 + warnings, 2 + info, 3 + debug
   RED_DOCTRINE = "SOVIET_PVO_1985",
   BLUE_DOCTRINE = "US_MODERN",
+  -- Optional modules (off by default)
+  STATS = false,             -- per-site emitting time, shots, kills and losses in dcs.log (every STATS_EVERY s and at the end)
+  STATS_EVERY = 600,         -- seconds between stats reports (0 = only at mission end)
+  BASE_WARNING = false,      -- "INCOMING" message to the side of a site with C-RAM (or tagged [warn]) when a weapon heads for it
+  BASE_WARNING_RANGE = 12000,   -- metres from the protected site
+  BASE_WARNING_SOUND = "",   -- optional sound file packed in the mission (e.g. "siren.ogg"); "" = text only
+  BASE_WARNING_COOLDOWN = 30,   -- seconds before the same site warns again
   -- Role words at the start of a group name (case-insensitive). Change these if your naming differs.
   ROLE_WORDS = {
     SAM = "SAM", EW = "EW", CMD = "CMD", PD = "PD", AAA = "AAA",

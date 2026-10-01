@@ -34,6 +34,13 @@ M.defaults = {
   LOG_LEVEL = 2,             -- 0 errors only, 1 + warnings, 2 + info, 3 + debug
   RED_DOCTRINE = "SOVIET_PVO_1985",
   BLUE_DOCTRINE = "US_MODERN",
+  -- Optional modules (off by default)
+  STATS = false,             -- per-site emitting time, shots, kills and losses in dcs.log (every STATS_EVERY s and at the end)
+  STATS_EVERY = 600,         -- seconds between stats reports (0 = only at mission end)
+  BASE_WARNING = false,      -- "INCOMING" message to the side of a site with C-RAM (or tagged [warn]) when a weapon heads for it
+  BASE_WARNING_RANGE = 12000,   -- metres from the protected site
+  BASE_WARNING_SOUND = "",   -- optional sound file packed in the mission (e.g. "siren.ogg"); "" = text only
+  BASE_WARNING_COOLDOWN = 30,   -- seconds before the same site warns again
   -- Role words at the start of a group name (case-insensitive). Change these if your naming differs.
   ROLE_WORDS = {
     SAM = "SAM", EW = "EW", CMD = "CMD", PD = "PD", AAA = "AAA",
@@ -228,6 +235,139 @@ U.coalitionName = { [0] = "neutral", [1] = "red", [2] = "blue" }
 
 M.info("core", "Janus IADS " .. M.VERSION .. " core loaded")
 end -- janus_core.lua
+
+-- ==================================================================== janus_api.lua
+do
+-- Janus IADS - the scripter's API (DESIGN 5.2, Phase 5). Optional: nothing here is needed for the zero-code setup.
+--
+-- Events (your function is called through Janus's error guard; an error in it never stops the IADS):
+--   JANUS.subscribe(event, fn [, key]) -> handle      the same event + key replaces the earlier function
+--   JANUS.unsubscribe(handle) -> true / false
+--     "engage"        { coalition, net, site, from (site handed from, or nil), track, unitId, typeName (nil if not
+--                       identified), pk }                       a site was given a target
+--     "harmDetected"  { coalition, net, arm, site, how }        the network confirmed an anti-radiation missile
+--     "emission"      { coalition, net, site, on, reason }      a site's radar went on or off
+--     "nodeLost"      { coalition, net, site, kind }            a site, post, relay or power node was destroyed
+--     "nodeRestored"  { coalition, net, site, kind, reason }    repaired, power back, relinked, radio back
+--     "nodeDegraded"  { coalition, net, site, kind, reason }    equipment lost, no power, unlinked, radio lost
+--   Every event table also carries `event` (its name) and `t` (mission seconds).
+-- Runtime changes:
+--   JANUS.setEmcon(site, policy)      "always" / "dark" / "cued" / "periodic" / "rotating", or nil for the doctrine's
+--   JANUS.setWeapons(coal, state [, net])   "free" / "tight" / "hold" (as JANUS.gci.weaponsControl)
+--   JANUS.setHold(site, true/false)   true = the site never goes dark for an ARM (the [hold] tag)
+--   JANUS.addGroup(groupName)         take a group spawned by another script now instead of at its birth event
+-- Reading:
+--   JANUS.site(name) -> { name, kind, coalition, net, tier, alive, working, powered, linked, emitting, emcon, dark,
+--                         assigned (track numbers), x, z }  or nil
+--   JANUS.siteNames(coal) -> sorted list of site names
+
+JANUS = JANUS or {}
+local M = JANUS
+
+local A = {}
+M.api = A
+
+local pairs, ipairs, type = pairs, ipairs, type
+
+A.EVENTS = { engage = true, harmDetected = true, emission = true, nodeLost = true, nodeRestored = true, nodeDegraded = true }
+local subs = {}
+for e in pairs(A.EVENTS) do subs[e] = {} end
+local nextHandle = 0   -- mutate: ok handles are opaque
+
+function M.subscribe(event, fn, key)
+  if not A.EVENTS[event] or type(fn) ~= "function" then return nil end
+  local list = subs[event]
+  if key ~= nil then
+    for _, s in ipairs(list) do
+      if s.key == key then s.fn = fn; return s.handle end
+    end
+  end
+  nextHandle = nextHandle + 1   -- mutate: ok handles are opaque
+  list[#list + 1] = { fn = fn, key = key, handle = nextHandle }
+  return nextHandle
+end
+
+function M.unsubscribe(handle)
+  for _, list in pairs(subs) do
+    for i = #list, 1, -1 do
+      if list[i].handle == handle then table.remove(list, i); return true end
+    end
+  end
+  return false
+end
+
+-- modules call this; costs nothing with no subscribers
+function M.publish(event, data)
+  local list = subs[event]
+  if not list or #list == 0 then return end   -- mutate: ok modules only publish known events
+  data.event, data.t = event, M.now()
+  for i = 1, #list do M.safe("api.subscriber." .. event, list[i].fn, data) end
+end
+
+local function nodeEvent(event)
+  return function(n, reason)
+    M.publish(event, { coalition = n.net.coalition, net = n.net.key, site = n.name, kind = n.kind, reason = reason })
+  end
+end
+
+-- ------------------------------------------------------------------ runtime changes
+function M.setEmcon(name, policy)
+  if policy ~= nil and not (M.emcon and M.emcon.POLICIES and M.emcon.POLICIES[policy]) then return false end
+  return M.emcon ~= nil and M.emcon.set(name, policy) or false
+end
+
+function M.setWeapons(coal, state, net)
+  return M.gci and M.gci.weaponsControl(coal, state, net) or 0   -- mutate: ok the gci module is always built in
+end
+
+function M.setHold(name, on)
+  local n = M.net and M.net.nodes[name]
+  if not n then return false end
+  n.site.tags.hold = on and "true" or nil
+  return true
+end
+
+function M.addGroup(groupName)
+  local g = Group.getByName(groupName)
+  if not (g and g:isExist()) then return false end
+  M.net.pickUp(g)
+  return M.net.nodes[groupName] ~= nil
+end
+
+-- ------------------------------------------------------------------ reading
+function M.site(name)
+  local n = M.net and M.net.nodes[name]
+  if not n then return nil end
+  local assigned = {}
+  for _, tr in ipairs(n.assigned or {}) do assigned[#assigned + 1] = tr.num end
+  local em = n.emcon or {}
+  return { name = n.name, kind = n.kind, coalition = n.net.coalition, net = n.net.key, tier = n.tier,
+           alive = n.alive == true, working = n.working == true, powered = n.powered == true, linked = n.linked == true,
+           emitting = em.on == true, emcon = em.policy, dark = (n.arm and n.arm.dark) ~= nil, assigned = assigned,
+           x = n.pos and n.pos.x, z = n.pos and n.pos.z }
+end
+
+function M.siteNames(coal)
+  local out = {}
+  for _, n in ipairs(M.net and M.net.list or {}) do
+    if coal == nil or n.net.coalition == coal then out[#out + 1] = n.name end
+  end
+  table.sort(out)
+  return out
+end
+
+function A.start()
+  local N = M.net
+  N.on("nodeLost", nodeEvent("nodeLost"))
+  N.on("restored", nodeEvent("nodeRestored"))
+  N.on("degraded", nodeEvent("nodeDegraded"))
+  if M.emcon and M.emcon.onChange then   -- mutate: ok both exist in every build
+    M.emcon.onChange[#M.emcon.onChange + 1] = function(n, on, reason)
+      M.publish("emission", { coalition = n.net.coalition, net = n.net.key, site = n.name, on = on, reason = reason })
+    end
+  end
+end
+end -- janus_api.lua
 
 -- ==================================================================== janus_units.lua
 do
@@ -4530,7 +4670,9 @@ do
 --   wta              weapon-target assignment (DESIGN 4.3): enabled; pkGoal = combined kill probability wanted per
 --                    target; maxShooters per target; pdDiscount = weight on point-defence bids; handoffMargin = how much
 --                    better a new shooter must be before a target is handed over; minPk = below this nobody is
---                    assigned; lead = seconds ahead a target is judged at (so the radar is up in time)
+--                    assigned; lead = seconds ahead a target is judged at (so the radar is up in time); weapons =
+--                    "free" (engage any hostile track), "tight" (only identified tracks: IFF / NCTR / type known) or
+--                    "hold" (no new engagements) - the start state; a GCI may change it (JANUS.gci.weaponsControl)
 --   arm              anti-radiation missile defence (DESIGN 4.5, janus_arm.lua):
 --                      enabled; confirmScans sightings within confirmWindow s confirm a radar sighting (eyes or two
 --                      sensors confirm at once); netDelay per tier: a confirmed ARM reaches linked nodes this late;
@@ -4545,7 +4687,10 @@ do
 --                      suspicion per tier: chance per second that an identified SEAD aircraft nose-on within
 --                      shooterRange (shooterCone degrees) sends an emitting radar dark for suspectDark s;
 --                      observers: { range, smokeRange } = ground observers at every site see ARMs by eye in daylight
---                      (NVA spotters; without it only optical units do)
+--                      (NVA spotters; without it only optical units do); launchCue: a linked radar holding the
+--                      shooter's track may see the launch itself (chance by sensor tier, janus_arm.lua A.LAUNCH;
+--                      off in every profile for 1.0: owner, 2026-10-01, to be designed properly first);
+--                      suspicion and suppression only count SEAD aircraft outside the site's own reach
 --   aaa              gun fire discipline (janus_aaa.lua): mode "free" (fire at will) or "trap" (flak trap: hold fire
 --                    until a known target is inside trapFactor x the gun's reach, keep firing `hold` s after it left)
 
@@ -4576,12 +4721,13 @@ local BASE = {
   fighterControl = "ground", awacsTakeover = false,
   altTakeover = TIER(240, 150, 90, 60),
   idTime = TIER(150, 90, 60, 40),
-  wta = { enabled = true, pkGoal = 0.7, maxShooters = 1, pdDiscount = 0.5, handoffMargin = 0.15, minPk = 0.15, lead = 40 },
+  wta = { enabled = true, pkGoal = 0.7, maxShooters = 1, pdDiscount = 0.5, handoffMargin = 0.15, minPk = 0.15, lead = 40,
+          weapons = "free" },
   arm = { enabled = true, confirmScans = 3, confirmWindow = 10, netDelay = TIER(8, 5, 3, 2), reaction = TIER(6, 3, 2, 1),  -- mutate: ok tuning
           cone = 15, margin = 10, predictErr = TIER(0.3, 0.15, 0.1, 0.05), minDark = 20, maxDark = 180,  -- mutate: ok tuning
           afterMax = "restart", pdEngage = true, trustPd = false, pdCoverRange = 15000, finishShot = true,  -- mutate: ok tuning
           finishMargin = 15, accept = false, suspicion = TIER(0.02, 0.01, 0.005, 0), suspectDark = 30,  -- mutate: ok tuning
-          shooterRange = 60000, shooterCone = 20 },  -- mutate: ok tuning
+          shooterRange = 60000, shooterCone = 20, launchCue = false },  -- mutate: ok tuning
   aaa = { mode = "free", trapFactor = 0.7, hold = 20 },  -- mutate: ok tuning
 }
 
@@ -4648,6 +4794,7 @@ M.Doctrines = {
     linkBackup = { range = 80000, delay = TIER(15, 10, 6, 4) },
     altTakeover = TIER(120, 60, 45, 30),
     idTime = TIER(90, 60, 40, 30),     -- IFF + procedural ID
+    wta = { weapons = "tight" },       -- positive ID before a SAM fires (friendly fighters share the airspace)
   }),
   -- Data-linked picture, fast reactions, point defence always up around protected assets.
   US_MODERN = derive(BASE, {
@@ -4662,6 +4809,7 @@ M.Doctrines = {
     linkBackup = { range = 150000, delay = TIER(8, 5, 3, 2) },
     altTakeover = TIER(60, 30, 20, 15),
     idTime = TIER(60, 40, 25, 20),     -- IFF, NCTR, fused picture
+    wta = { weapons = "tight" },       -- positive ID before a SAM fires (JEZ/MEZ: fighters share the airspace)
     arm = { reaction = TIER(4, 2, 1, 1), netDelay = TIER(3, 2, 1, 1), suspicion = TIER(0, 0, 0, 0) },  -- mutate: ok tuning
   }),
   -- North Vietnam 1965-72: Fan Song emits for seconds only, sites cued by early warning, AAA always ready.
@@ -5514,20 +5662,40 @@ end
 
 -- Threat of a track to the network: time until it reaches the nearest defended node (closure), low altitude and
 -- identified type raise it. Higher = more urgent.
-function W.threat(tr, net)
-  if not tr.pos then return 0 end
-  local bestT
-  local v = tr.vel
+-- `defended` (optional): the network's defended nodes as { x, z } points, from W.defended(net), when scoring many tracks.
+function W.defended(net)
+  local list = {}
   for _, n in ipairs(net.nodes) do
-    if DEFENDED[n.kind] and n.alive and n.pos then
-      local dx, dz = n.pos.x - tr.pos.x, n.pos.z - tr.pos.z
-      local d = math_sqrt(dx * dx + dz * dz)
+    if DEFENDED[n.kind] and n.alive and n.pos then list[#list + 1] = n.pos end
+  end
+  return list
+end
+
+function W.threat(tr, net, defended)
+  if not tr.pos then return 0 end
+  defended = defended or W.defended(net)
+  local bestT, bound2
+  local v = tr.vel
+  local px, pz = tr.pos.x, tr.pos.z
+  -- no node is reached sooner than distance / max(50, speed): once one is found, farther ones are skipped unmeasured
+  local fastest = 50   -- mutate: ok pruning bound: any larger value only prunes less
+  if v then fastest = math_max(50, math_sqrt(v.x * v.x + v.z * v.z)) end   -- mutate: ok pruning bound: larger only prunes less
+  for i = 1, #defended do
+    local q = defended[i]
+    local dx, dz = q.x - px, q.z - pz
+    local d2 = dx * dx + dz * dz
+    if not bound2 or d2 < bound2 then
+      local d = math_sqrt(d2)
       local closing = 50                                   -- a track that is not closing is still a threat, slowly
       if v and d > 1 then   -- mutate: ok guard against a target on top of the node
         closing = math_max(50, (v.x * dx + v.z * dz) / d)
       end
       local t = d / closing
-      if not bestT or t < bestT then bestT = t end
+      if not bestT or t < bestT then
+        bestT = t
+        local b = t * fastest
+        bound2 = b * b
+      end
     end
   end
   if not bestT then return 0 end
@@ -5566,29 +5734,65 @@ local function refreshAmmo(n)
   end
 end
 
+local SHOOTERS = { BATTERY = true, PD = true, NAVAL = true }   -- ships bid from their NAVAL_AD envelopes (Phase 4)
 local function shooterOK(n)
-  return (n.kind == "BATTERY" or n.kind == "PD") and n.alive and n.working and n.powered and n.linked
+  return SHOOTERS[n.kind] and n.alive and n.working and n.powered and n.linked
     and not n.autonomous and (n.engageRange or 0) > 0 and n.pos ~= nil   -- mutate: ok W.pk rejects these too
     and not (M.arm and M.arm.isDark(n))           -- dark against an ARM: someone else takes the target
+end
+
+-- Weapons control (DESIGN 4.10 item 5): "free" engage any hostile track; "tight" only identified ones (the type is
+-- known: a sensor reported it, or the doctrine's idTime of continuous track passed); "hold" no assignments at all.
+-- The doctrine sets the start state (wta.weapons); a GCI script may change it (JANUS.gci.weaponsControl).
+W.WEAPONS = { free = true, tight = true, hold = true }
+function W.weapons(net)
+  if not net.weapons then net.weapons = (net.doctrine.wta or {}).weapons or "free" end  -- mutate: ok every profile sets it
+  return net.weapons
+end
+function W.setWeapons(net, state, why)
+  if not W.WEAPONS[state] then return false end
+  local old = W.weapons(net)
+  if old ~= state then
+    net.weapons = state
+    M.info("wta", string_format("%s weapons %s (was %s)%s", net.key, string.upper(state), old, why and (": " .. why) or ""))
+  end
+  return true
+end
+
+-- why a track got no shooter this pass (for the log and JANUS.gci.commitRequests)
+local function noteUnassigned(net, tr, reason)
+  net.unassigned[tr.id] = { tr = tr, reason = reason }
+  net.heldLog = net.heldLog or {}
+  if (reason == "weapons tight" or reason == "weapons hold") and net.heldLog[tr.id] ~= reason then
+    net.heldLog[tr.id] = reason
+    M.info("wta", string_format("%s %s held: %s%s", net.key, M.tracks.label(tr), reason,
+      reason == "weapons tight" and " (not identified)" or ""))
+  end
 end
 
 function W.assign(net)
   local w = net.doctrine.wta or {}
   local prev = net.assign or {}
+  net.unassigned = {}
   if not w.enabled or not net.tracks then
     net.wtaActive = w.enabled and true or false
     net.assign = {}
     for _, n in ipairs(net.nodes) do n.assigned = nil end
     return
   end
+  local weapons = W.weapons(net)
   net.wtaActive = true
-  local shooters = {}
+  local shooters, envs = {}, {}
   for _, n in ipairs(net.nodes) do
-    if shooterOK(n) then shooters[#shooters + 1] = n end
+    if shooterOK(n) then
+      shooters[#shooters + 1] = n
+      envs[#shooters] = W.envelope(n)
+    end
     n.assigned = nil
   end
   local tracks = M.tracks.list(net.tracks)
-  for _, tr in ipairs(tracks) do tr.threat = W.threat(tr, net) end
+  local defended = W.defended(net)
+  for _, tr in ipairs(tracks) do tr.threat = W.threat(tr, net, defended) end
   table.sort(tracks, function(a, b)
     if a.threat ~= b.threat then return a.threat > b.threat end
     return a.num < b.num
@@ -5607,17 +5811,22 @@ function W.assign(net)
   local minPk, margin, disc, lead = w.minPk or 0.15, w.handoffMargin or 0.15, w.pdDiscount or 0.5, w.lead or 0  -- mutate: ok defaults for custom tables
   for _, tr in ipairs(tracks) do
     local bids = {}
+    local held_by = (weapons == "hold" and "weapons hold") or (weapons == "tight" and not tr.typeKnown and "weapons tight")
+    local inReach = false
     local v = tr.vel
     local reachExtra = v and lead * math_sqrt(v.x * v.x + v.z * v.z) or 0   -- mutate: ok 1 m of slack
-    for _, n in ipairs(shooters) do
-      local env = W.envelope(n)
+    local mineSet = {}
+    for _, old in ipairs(prev[tr.id] or {}) do mineSet[old.node] = true end
+    local px, pz = tr.pos.x, tr.pos.z
+    for i = 1, #shooters do
+      local n, env = shooters[i], envs[i]
       -- cheap reject before the Pk model: farther than range + lead travel (squared, horizontal)
-      local dx, dz = tr.pos.x - n.pos.x, tr.pos.z - n.pos.z
+      local dx, dz = px - n.pos.x, pz - n.pos.z
       local reach = env.R + reachExtra
-      local mine = false
-      for _, old in ipairs(prev[tr.id] or {}) do if old.node == n then mine = true end end
-      local reserved = (held[n] or 0) - (mine and 1 or 0)   -- mutate: ok a larger discount for its own target changes nothing: it is settled next
-      if (load[n] or 0) + reserved < env.channels and dx * dx + dz * dz <= reach * reach then
+      local near = dx * dx + dz * dz <= reach * reach
+      if near then inReach = true end
+      local reserved = near and (held[n] or 0) - (mineSet[n] and 1 or 0)   -- mutate: ok a larger discount for its own target changes nothing: it is settled next
+      if near and not held_by and (load[n] or 0) + reserved < env.channels then
         local pk = W.pk(n, tr, lead)
         if pk >= minPk then
           bids[#bids + 1] = { node = n, pk = pk, bid = n.kind == "PD" and pk * disc or pk }
@@ -5671,10 +5880,16 @@ function W.assign(net)
         else
           M.info("wta", string_format("%s %s assigned to %s (Pk %.2f)", net.key, label, c.node.name, c.pk))
         end
+        M.publish("engage", { coalition = net.coalition, net = net.key, site = c.node.name, from = from and from.name,
+          track = tr.num, unitId = tr.id, typeName = tr.typeKnown and tr.typeName or nil, pk = c.pk })
       end
     end
     if #chosen == 0 and #had > 0 and net.tracks[tr.id] then
       M.info("wta", string_format("%s %s: no shooter can engage (was %s)", net.key, label, had[1].node.name))
+    end
+    if #chosen == 0 then
+      -- out of every shooter's reach is the fighters' business whatever the weapons state; inside it, why we wait
+      noteUnassigned(net, tr, (not inReach and "out of reach") or held_by or "no shooter free")
     end
   end
   net.assign = out
@@ -5686,7 +5901,7 @@ function W.tick()
   if now - W.ammoAt >= W.AMMO_INTERVAL then
     W.ammoAt = now
     for _, n in ipairs(M.net.list) do
-      if (n.kind == "BATTERY" or n.kind == "PD") and n.alive then M.safe("wta.ammo", refreshAmmo, n) end  -- mutate: ok saves work only
+      if SHOOTERS[n.kind] and n.alive then M.safe("wta.ammo", refreshAmmo, n) end  -- mutate: ok saves work only
     end
   end
   for _, net in pairs(M.net.networks) do W.assign(net) end
@@ -5732,6 +5947,7 @@ local pairs, ipairs = pairs, ipairs
 E.SHOT_HOLD_MAX = 120   -- a site never stays up longer than this for one missile (lost weapons, odd targets)
 
 local POLICIES = { always = true, dark = true, cued = true, periodic = true, rotating = true }
+E.POLICIES = POLICIES
 local MANAGED = { EW = true, BATTERY = true, PD = true, AAA = true, NAVAL = true, C2 = true }
 
 local function restartTime(n)
@@ -6088,6 +6304,13 @@ A.MODERN_EW = { ["S-300PS 64H6E sr"] = true, ["S-300PS 40B6MD sr"] = true, ["FPS
 A.SEE = { A = { factor = 0.4, p = 0.8 }, B = { factor = 0.35, p = 0.25 }, C = { factor = 0.25, p = 0.03 } }  -- mutate: ok tuning
 A.CREW = { GRN = 0.6, REG = 1.0, VET = 1.2, ACE = 1.4 }     -- mutate: ok tuning
 A.EYES = { range = 10000, smokeRange = 15000, p = 0.5 }     -- mutate: ok tuning
+-- launch cue (bench 07): a radar holding the shooter's track sees the missile come off it, chance by sensor tier
+-- (x crew). In DCS an ARM whose emitter shuts down a minute or more before impact misses by hundreds of metres; one
+-- that loses it in the last seconds still hits (bench 07: Skynet sites, dark early, took no ARM hits).
+A.LAUNCH = { A = 0.8, B = 0.5, C = 0.1 }                    -- mutate: ok tuning
+A.LAUNCH_FRESH = 2                                          -- mutate: ok tuning; the shooter's track is that recent
+A.LAUNCH_TRACK = 10   -- the radar that saw the launch keeps the missile for this long (s): the fix at the instant of
+                      -- launch carries the aircraft's velocity, not the missile's (bench 07 run 4: dead-reckoned off target)
 -- shortest dark time per DCS radar type (4.5B); others use the doctrine's minDark
 A.MIN_DARK = { ["S-300PS 40B6M tr"] = 30, ["SA-11 Buk LN 9A310M1"] = 20, RPC_5N62V = 60, SNR_75V = 15,  -- mutate: ok tuning
                ["snr s-125 tr"] = 15 }                        -- mutate: ok tuning
@@ -6184,6 +6407,40 @@ function A.onShot(e)
   A.flights[#A.flights + 1] = f
   A.stats.launched = A.stats.launched + 1
   M.debug("arm", string_format("%s launched: %s (crews are not told)", f.id, f.type))   -- mutate: ok debug log
+  local okI, sid = pcall(e.initiator.getID, e.initiator)
+  if okI and sid then A.launchCue(f, sid) end   -- mutate: ok defensive: DCS units always have an ID
+end
+
+-- launch cue: each enemy network whose linked radars hold the shooter's track may see the launch
+function A.launchCue(f, shooterId)
+  local now = M.now()
+  local okV, v = pcall(f.w.getVelocity, f.w)
+  if not (okV and v) then return end   -- mutate: ok defensive: DCS weapons have a velocity
+  f.vel = v
+  for _, net in pairs(M.net.networks) do
+    local d = net.doctrine.arm
+    local tr = net.tracks and net.tracks[shooterId]
+    if d and d.enabled and d.launchCue and net.coalition ~= f.coa and tr and now - tr.t <= A.LAUNCH_FRESH then
+      local best, bestP
+      for name, t in pairs(tr.sensors or {}) do
+        if now - t <= A.LAUNCH_FRESH then
+          local n = M.net.nodes[name]
+          if n and up(n) and n.linked then   -- mutate: ok defensive: only working, linked nodes feed the network picture
+            local p = A.LAUNCH[A.sensorTier(n)] * (A.CREW[n.tier] or 1)   -- mutate: ok every tier is in CREW
+            if not bestP or p > bestP then best, bestP = n, p end
+          end
+        end
+      end
+      if best and A.rand() < bestP then
+        net.arms = net.arms or {}
+        net.arms[f.id] = { f = f, id = f.id, sights = {}, first = now, last = now, pos = f.pos, vel = v,
+                           netLast = now, netPos = f.pos, netVel = v, netConfirmed = now, netBy = best.name, netHow = "launch",
+                           launchUntil = now + A.LAUNCH_TRACK }
+        M.info("arm", string_format("%s ARM %s launch seen by %s (%s)", net.key, f.id, best.name, M.tracks.label(tr)))
+        M.publish("harmDetected", { coalition = net.coalition, net = net.key, arm = f.id, site = best.name, how = "launch" })
+      end
+    end
+  end
 end
 
 -- an ARM hitting a network unit: scored, with the radar's state at the time
@@ -6253,6 +6510,7 @@ local function confirmNet(net, th, now)
   if not th.netConfirmed and current >= 2 then th.netConfirmed, th.netBy, th.netHow = now, by, "2 sensors" end
   if th.netConfirmed then
     M.info("arm", string_format("%s ARM %s confirmed by %s (%s)", net.key, th.id, th.netBy, th.netHow))
+    M.publish("harmDetected", { coalition = net.coalition, net = net.key, arm = th.id, site = th.netBy, how = th.netHow })
   end
 end
 
@@ -6388,14 +6646,21 @@ local function isSead(tr)
   local v = tr.vel
   return tr.typeKnown and A.SEAD_TYPES[tr.typeName] and v ~= nil and v.x * v.x + v.z * v.z > 2500   -- moving > 50 m/s  -- mutate: ok threshold tuning
 end
+-- a SEAD aircraft inside the site's own reach is attacking it: the crew fights instead of hiding (bench 07: an SA-11
+-- went dark for a strafing F-16 at 1 km, which then shot it up). Suspicion and suppression only count stand-off shooters.
+local function ownReach(n)
+  if n.kind == "BATTERY" or n.kind == "PD" or n.kind == "NAVAL" then return M.wta.envelope(n).R end  -- mutate: ok an EW / C2 envelope has R 0 too
+  return 0   -- mutate: ok any reach under the nearest SEAD standoff range behaves the same
+end
 local function seadNoseOn(n)
   local d = n.net.doctrine.arm
+  local reach = ownReach(n)
   local best
   local function scan(pic)
     for _, tr in pairs(pic or {}) do
       if isSead(tr) then
         local dist = horiz(tr.pos, n.pos)
-        if dist <= d.shooterRange and offAngle(tr.pos, tr.vel, n.pos) <= d.shooterCone then
+        if dist <= d.shooterRange and dist > reach and offAngle(tr.pos, tr.vel, n.pos) <= d.shooterCone then
           if not best or dist < best.dist then best = { tr = tr, dist = dist } end   -- mutate: ok nearest only names the log
         end
       end
@@ -6631,12 +6896,23 @@ local function busy(n)   -- mutate: ok (whole function) performance only: a busy
   return s ~= nil and (s.dark ~= nil or s.coverUntil ~= nil or s.mode ~= nil or s.reactAt ~= nil)   -- mutate: ok
 end
 
+-- a launch-cued missile is held by the radar that saw it come off the shooter for its first A.LAUNCH_TRACK seconds
+local function launchTrack(net, now)
+  for _, th in pairs(net.arms or {}) do
+    local f = th.f
+    if th.launchUntil and now <= th.launchUntil and f.pos and f.vel then
+      th.netLast, th.netPos, th.netVel, th.last, th.pos, th.vel = now, f.pos, f.vel, now, f.pos, f.vel
+    end
+  end
+end
+
 function A.tick()
   local now = M.now()
   updateFlights(now)
   for _, net in pairs(M.net.networks) do
     local d = net.doctrine.arm
     if d and d.enabled then
+      launchTrack(net, now)
       for _, f in ipairs(A.flights) do
         if f.coa ~= net.coalition and f.pos and f.vel then sense(net, f, now) end
       end
@@ -6808,8 +7084,12 @@ do
 --   JANUS.gci.controlState(coal, point [, postName])   can a ground controller reach this point, through which post
 --                                     (postName: only through that post)
 --   JANUS.gci.samZones(coal)          every working battery's engagement zone, with an `emitting` flag
+--   JANUS.gci.commitRequests(coal)    tracks the SAM network is not engaging, with the reason, most threatening first:
+--                                     the fighters' work ("out of reach", "no shooter free", "weapons tight", "weapons hold")
+--   JANUS.gci.weapons(coal)           weapons control state per network: { [net] = "free" | "tight" | "hold" }
+--   JANUS.gci.weaponsControl(coal, state [, net])   set it (the one call that changes Janus): returns networks changed
 -- Every function returns plain tables built from Janus's own state (copies, never Janus's internals) and never
--- errors for a coalition with no network. Coalitions: 1 red, 2 blue.
+-- errors for a coalition with no network. Coalitions: 1 red, 2 blue. All but weaponsControl are read-only.
 
 JANUS = JANUS or {}
 local M = JANUS
@@ -7019,6 +7299,50 @@ function G.samZones(coal)
   return out
 end
 
+-- ------------------------------------------------------------------ commit requests, weapons control (Phase 4)
+function G.commitRequests(coal)
+  local out = {}
+  local nets = netsOf(coal)
+  local engaged = {}
+  for _, net in ipairs(nets) do
+    for id in pairs(net.assign or {}) do engaged[id] = true end
+  end
+  local seen = {}
+  for _, net in ipairs(nets) do
+    for id, u in pairs(net.unassigned or {}) do
+      local tr = u.tr
+      if not engaged[id] and not seen[id] and net.tracks and net.tracks[id] and tr.pos then
+        seen[id] = true
+        local c = copyTrack(tr)
+        c.reason, c.threat, c.net = u.reason, tr.threat or 0, net.key   -- mutate: ok WTA sets threat on every track it ranks
+        out[#out + 1] = c
+      end
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.threat ~= b.threat then return a.threat > b.threat end
+    return a.num < b.num
+  end)
+  return out
+end
+
+function G.weapons(coal)
+  local out = {}
+  for _, net in ipairs(netsOf(coal)) do out[net.key] = M.wta.weapons(net) end
+  return out
+end
+
+-- netName: the network's name ("main", or its [net:] tag) or key ("red/main"); nil = every network of the coalition
+function G.weaponsControl(coal, state, netName)
+  local n = 0
+  for _, net in ipairs(netsOf(coal)) do
+    if netName == nil or net.name == netName or net.key == netName then
+      if M.wta.setWeapons(net, state, "ground control") then n = n + 1 end
+    end
+  end
+  return n
+end
+
 -- ------------------------------------------------------------------ wiring (network callbacks -> events)
 function G.start()
   local on = M.net.on
@@ -7034,6 +7358,434 @@ function G.start()
   M.info("gci", string.format("ground-control interface v%d ready (instance %d)", G.version, G.instance))
 end
 end -- janus_gci.lua
+
+-- ==================================================================== janus_stats.lua
+do
+-- Janus IADS - stats (DESIGN 4.8, Phase 5; off unless STATS = true). Per site: radar emitting time, shots fired,
+-- kills (DCS S_EVENT_KILL credited to one of the site's units), units lost; written to dcs.log every STATS_EVERY
+-- seconds and at mission end, the same figures the test benches use.
+--   JANUS.stats() -> { [siteName] = { coalition, kind, emitMin, shots, kills, lost } }   (works with STATS off too)
+
+JANUS = JANUS or {}
+local M = JANUS
+local S = M.settings
+
+local ST = {}
+M.statsMod = ST
+
+local string_format = string.format
+local ipairs, pairs = ipairs, pairs
+
+ST.counts = {}   -- [siteName] = { shots, kills }
+
+local function nodeOf(unit)
+  if not (unit and unit.getGroup) then return nil end
+  local ok, g = pcall(unit.getGroup, unit)
+  if not (ok and g) then return nil end   -- mutate: ok defensive: a unit always has a group
+  local okN, name = pcall(g.getName, g)
+  return okN and M.net.nodes[name] or nil
+end
+
+local function counts(name)
+  local c = ST.counts[name]
+  if not c then c = { shots = 0, kills = 0 }; ST.counts[name] = c end
+  return c
+end
+
+function ST.onShot(e)
+  local n = nodeOf(e.initiator)
+  if n then local c = counts(n.name); c.shots = c.shots + 1 end
+end
+
+function ST.onKill(e)
+  local n = nodeOf(e.initiator)
+  if n then local c = counts(n.name); c.kills = c.kills + 1 end
+end
+
+local function lostUnits(n)
+  local lost = 0
+  for _, u in ipairs(n.site.units or {}) do
+    local ok, ex = pcall(u.unit.isExist, u.unit)
+    if not (ok and ex) then lost = lost + 1 end
+  end
+  return lost
+end
+
+function M.stats()
+  local out = {}
+  for _, n in ipairs(M.net and M.net.list or {}) do
+    local c = ST.counts[n.name] or { shots = 0, kills = 0 }
+    out[n.name] = { coalition = n.net.coalition, kind = n.kind, emitMin = ((n.emcon and n.emcon.emitSec) or 0) / 60,   -- mutate: ok every node has emcon
+                    shots = c.shots, kills = c.kills, lost = lostUnits(n) }
+  end
+  return out
+end
+
+function ST.report(why)
+  local all = M.stats()
+  local names = {}
+  for name in pairs(all) do names[#names + 1] = name end
+  table.sort(names)
+  local function zero() return { emit = 0, shots = 0, kills = 0, lost = 0 } end
+  local tot = { [1] = zero(), [2] = zero() }
+  for _, name in ipairs(names) do
+    local s = all[name]
+    if s.emitMin + s.shots + s.kills + s.lost > 0 then
+      M.info("stats", string_format("%s %s: emitting %.1f min, %d shots, %d kills, %d units lost", s.coalition == 1 and "red" or "blue",
+        name, s.emitMin, s.shots, s.kills, s.lost))
+    end
+    local t = tot[s.coalition]
+    if t then
+      t.emit, t.shots, t.kills, t.lost = t.emit + s.emitMin, t.shots + s.shots, t.kills + s.kills, t.lost + s.lost
+    end
+  end
+  for coa = 1, 2 do
+    local t = tot[coa]
+    M.info("stats", string_format("%s total (%s): emitting %.1f min, %d shots, %d kills, %d units lost", coa == 1 and "red" or "blue",
+      why, t.emit, t.shots, t.kills, t.lost))
+  end
+end
+
+function ST.start()
+  M.on(world.event.S_EVENT_SHOT, "stats.shot", ST.onShot)
+  if world.event.S_EVENT_KILL then M.on(world.event.S_EVENT_KILL, "stats.kill", ST.onKill) end
+  if not S.STATS then return end
+  if world.event.S_EVENT_MISSION_END then
+    M.on(world.event.S_EVENT_MISSION_END, "stats.end", function() ST.report("mission end") end)
+  end
+  if (S.STATS_EVERY or 0) > 0 then   -- mutate: ok the default is always set
+    M.every("stats.report", S.STATS_EVERY, function() ST.report(string_format("%.0f s", M.now())) end)
+  end
+end
+end -- janus_stats.lua
+
+-- ==================================================================== janus_warning.lua
+do
+-- Janus IADS - base warning (DESIGN 4.8, Phase 5; off unless BASE_WARNING = true). A site with C-RAM, or any site
+-- tagged [warn], is a protected place. When an enemy bomb, rocket, shell or air-to-ground missile comes within
+-- BASE_WARNING_RANGE of it, Janus tells that side "INCOMING" (text, plus BASE_WARNING_SOUND if set), once per
+-- BASE_WARNING_COOLDOWN seconds per place. The place is named after the nearest airbase within 15 km, else the site.
+-- Air-to-air and surface-to-air missiles are ignored (they are after aircraft, not the base).
+
+JANUS = JANUS or {}
+local M = JANUS
+local S = M.settings
+
+local BW = {}
+M.warning = BW
+
+local string_format = string.format
+local ipairs = ipairs
+
+BW.NAME_RANGE = 15000
+BW.weapons = {}      -- { w, coalition }
+BW.lastWarn = {}     -- [siteName] = time
+
+local function protected(n)
+  if n.site.tags.warn then return true end
+  for _, u in ipairs(n.site.units or {}) do
+    if u.rec and u.rec.role == "CRAM" then return true end
+  end
+  return false
+end
+
+local function placeName(n)
+  if n.placeName then return n.placeName end
+  local best, bestD
+  for _, ab in ipairs(world.getAirbases() or {}) do
+    local okP, p = pcall(ab.getPoint, ab)
+    if okP and p then   -- mutate: ok defensive: DCS airbases always have a point
+      local dx, dz = p.x - n.pos.x, p.z - n.pos.z
+      local d = dx * dx + dz * dz
+      if d <= BW.NAME_RANGE * BW.NAME_RANGE and (not bestD or d < bestD) then
+        local okN, name = pcall(ab.getName, ab)
+        if okN then best, bestD = name, d end
+      end
+    end
+  end
+  n.placeName = best or n.site.label or n.name
+  return n.placeName
+end
+
+-- weapons aimed at aircraft are not the base's business
+local function groundWeapon(w)
+  local ok, d = pcall(w.getDesc, w)
+  if not (ok and d) then return false end   -- mutate: ok defensive: DCS weapons always have a description
+  if d.category == Weapon.Category.MISSILE then
+    return d.missileCategory ~= Weapon.MissileCategory.AAM and d.missileCategory ~= Weapon.MissileCategory.SAM
+  end
+  return true
+end
+
+function BW.onShot(e)
+  local w, u = e.weapon, e.initiator
+  if not (w and u) then return end
+  local okC, coa = pcall(u.getCoalition, u)
+  if okC and groundWeapon(w) then BW.weapons[#BW.weapons + 1] = { w = w, coalition = coa } end
+end
+
+function BW.tick()
+  local now = M.now()
+  local r2 = S.BASE_WARNING_RANGE * S.BASE_WARNING_RANGE
+  local sites = {}
+  for _, n in ipairs(M.net.list) do
+    if n.alive and n.pos and protected(n) then sites[#sites + 1] = n end
+  end
+  for i = #BW.weapons, 1, -1 do
+    local e = BW.weapons[i]
+    local okE, ex = pcall(e.w.isExist, e.w)
+    if not (okE and ex) then
+      table.remove(BW.weapons, i)
+    else
+      local p = e.w:getPoint()
+      for _, n in ipairs(sites) do
+        if n.net.coalition ~= e.coalition then
+          local dx, dz = p.x - n.pos.x, p.z - n.pos.z
+          if dx * dx + dz * dz <= r2 and not (e.warned and e.warned[n.name])
+            and now - (BW.lastWarn[n.name] or -1e9) >= S.BASE_WARNING_COOLDOWN then
+            e.warned = e.warned or {}
+            e.warned[n.name] = true   -- one weapon warns a place once
+            BW.lastWarn[n.name] = now
+            local place = placeName(n)
+            trigger.action.outTextForCoalition(n.net.coalition, string_format("INCOMING! %s - take cover", place), 10)
+            if S.BASE_WARNING_SOUND and S.BASE_WARNING_SOUND ~= "" then
+              trigger.action.outSoundForCoalition(n.net.coalition, S.BASE_WARNING_SOUND)
+            end
+            M.info("warning", string_format("%s INCOMING at %s (%s, %s)", n.net.key, place, n.name, tostring(e.w:getTypeName())))
+          end
+        end
+      end
+    end
+  end
+end
+
+function BW.start()
+  if not S.BASE_WARNING then return end
+  M.on(world.event.S_EVENT_SHOT, "warning.shot", BW.onShot)
+  M.every("warning.tick", 1, BW.tick, 1)   -- mutate: ok cadence
+end
+end -- janus_warning.lua
+
+-- ==================================================================== janus_spawn.lua
+do
+-- Janus IADS - spawning a battery from its real-world preset (DESIGN 4.9, Phase 4), on ground flat enough to fire.
+--
+--   JANUS.spawnBattery(preset, point [, opts]) -> group name, info   |   nil, error
+--     preset  a key of JANUS.Presets ("SA-6", "PATRIOT", "HAWK", ...)
+--     point   { x, z } (or { x, y } with y = map z, as the Mission Editor gives it): where to look for a site
+--     opts    coalition 1 red / 2 blue (default 1); country (DCS country id; default Russia / USA); label (name after
+--             the role word, default "<preset> <n>"); tier "GRN" / "REG" / "VET" / "ACE" (default REG; sets the DCS
+--             skill too); heading (degrees, default 0); full = true (optional units too: trucks, extra launchers);
+--             aaa = true (the preset's gun ring as its own "AAA ..." group); search (m, default 5000): how far from
+--             `point` to look; maxSlope (degrees): steepest ground accepted, default the probe-measured limit of the
+--             battery's units (SLOPE_LIMITS, e.g. Hawk 2, SA-2 3) or 8 for units with none; tags (extra name tags,
+--             e.g. "[net:North]")
+--   A preset with a unit type this DCS install lacks (paid DLC such as the WWII Assets Pack not owned) is refused.
+--   Naval presets (CSG-USN, SAG-RU) spawn as a ship group on open water (no slope test), never with a gun ring.
+--   The group is named "<SAM|PD|AAA|EW|SHIP> <label> <tier>" ("<label> #2" etc. if that name is taken) so Janus picks it up like any other (S_EVENT_BIRTH).
+--   info = { x, z, slope (worst under any unit), limit, units, aaa = name of the gun group or nil }
+-- Layout: the fire-control (or search) radar at the centre, launchers on the preset's ring, units with a spacing
+-- off to the side, everything else (command post, power, trucks) behind it.
+
+JANUS = JANUS or {}
+local M = JANUS
+
+local SP = {}
+M.spawn = SP
+
+local string_format = string.format
+local math_cos, math_sin, math_rad, math_pi = math.cos, math.sin, math.rad, math.pi
+local ipairs = ipairs
+
+SP.seq = 0
+SP.DEFAULT_SLOPE = 8          -- units the probes found no limit for (SA-6 / SA-11 / Patriot fired on 10-26 deg ground)
+SP.STEP = 250                 -- spiral search step (m)
+local SKILL = { GRN = "Average", REG = "Good", VET = "High", ACE = "Excellent" }
+SP.SKILL = SKILL
+-- which unit stands at the centre: the first listed unit of the earliest role here
+SP.CENTRE_ORDER = { "TR", "STR", "SR", "SHORAD", "CRAM", "AAA_FC", "AAA", "EWR" }
+local CENTRE_ROLES = {}
+for i, r in ipairs(SP.CENTRE_ORDER) do CENTRE_ROLES[r] = i end
+
+local function countOf(u, full)
+  local c = u.count
+  if type(c) == "table" then
+    return full and c[2] or c[1]     -- the minimum (0 for optional units) unless `full`
+  end
+  return c or 1   -- mutate: ok every preset unit lists a count
+end
+
+-- the Janus role (key of settings ROLE_WORDS) the preset's group gets
+local function roleWord(preset)
+  local has = {}
+  for _, u in ipairs(preset.units) do has[u.role] = true end
+  if has.NAVAL_AD then return "SHIP" end
+  if has.LN or has.TELAR or has.TR or has.STR then return "SAM" end
+  if has.SHORAD or has.CRAM then return "PD" end
+  if has.AAA then return "AAA" end
+  return "EW"
+end
+SP.roleWord = roleWord
+
+-- unit offsets (x north, z east) before rotation, from the preset
+function SP.layout(preset, full)
+  local out = {}
+  local centre, cRank
+  for i, u in ipairs(preset.units) do
+    local r = CENTRE_ROLES[u.role]
+    if r and countOf(u, full) > 0 and (not cRank or r < cRank) then centre, cRank = i, r end
+  end
+  local side, back = 0, 0
+  for i, u in ipairs(preset.units) do
+    local n = countOf(u, full)
+    for k = 1, n do
+      local dx, dz
+      if i == centre and k == 1 then
+        dx, dz = 0, 0
+      elseif u.ring then
+        local a = 2 * math_pi * (k - 1) / n
+        dx, dz = u.ring * math_cos(a), u.ring * math_sin(a)
+      elseif u.spacing then
+        side = side + 1
+        dx, dz = 40 * side, u.spacing * k                       -- off to the east, one spacing apart
+      else
+        back = back + 1
+        dx, dz = -60 - 40 * back, 30 * ((back % 3) - 1)         -- behind the centre (south), staggered
+      end
+      out[#out + 1] = { type = u.type, dx = dx, dz = dz, role = u.role }
+    end
+  end
+  return out
+end
+
+local function rotate(dx, dz, hdg)
+  local c, s = math_cos(hdg), math_sin(hdg)
+  return dx * c - dz * s, dx * s + dz * c
+end
+
+-- worst slope under every unit and whether all of them stand on land, for a centre at (x, z)
+local function siteSlope(units, x, z, hdg, surface)
+  local worst = 0
+  for _, u in ipairs(units) do
+    local ox, oz = rotate(u.dx, u.dz, hdg)
+    local p = { x = x + ox, z = z + oz }
+    if land.getSurfaceType({ x = p.x, y = p.z }) ~= surface then return nil end
+    local s = surface == land.SurfaceType.LAND and M.slopeAt(p) or 0
+    if s > worst then worst = s end
+  end
+  return worst
+end
+
+function SP.limitFor(units, opts)
+  if opts.maxSlope then return opts.maxSlope end
+  local lim
+  for _, u in ipairs(units) do
+    local l = M.SLOPE_LIMITS[u.type]
+    if l and (not lim or l < lim) then lim = l end
+  end
+  return lim or SP.DEFAULT_SLOPE
+end
+
+-- spiral out from (x, z) in SP.STEP rings; the first centre whose every unit is on land within the limit
+function SP.findSite(units, x, z, hdg, limit, search, surface)
+  surface = surface or land.SurfaceType.LAND
+  local s0 = siteSlope(units, x, z, hdg, surface)
+  if s0 and s0 <= limit then return x, z, s0 end
+  for ring = 1, math.floor(search / SP.STEP) do
+    local n = ring * 6
+    for i = 1, n do
+      local a = (i / n) * 2 * math_pi
+      local cx, cz = x + ring * SP.STEP * math_cos(a), z + ring * SP.STEP * math_sin(a)
+      local s = siteSlope(units, cx, cz, hdg, surface)
+      if s and s <= limit then return cx, cz, s end
+    end
+  end
+  return nil
+end
+
+-- a one-point route (stand still), as the Mission Editor writes for a parked group
+local function route(x, z, naval)
+  return { points = { { x = x, y = z, type = "Turning Point", action = naval and "Turning Point" or "Off Road", speed = 0,
+    task = { id = "ComboTask", params = { tasks = {} } } } } }
+end
+
+local function groupUnits(name, units, x, z, hdg, skill)
+  local out = {}
+  for i, u in ipairs(units) do
+    local ox, oz = rotate(u.dx, u.dz, hdg)
+    out[i] = { name = string_format("%s-%d", name, i), type = u.type, skill = skill, x = x + ox, y = z + oz,
+               heading = hdg, playerCanDrive = false }
+  end
+  return out
+end
+
+function M.spawnBattery(presetName, point, opts)
+  opts = opts or {}
+  local preset = M.Presets and M.Presets[presetName]
+  if not preset then return nil, "unknown preset " .. tostring(presetName) end
+  if not (point and point.x and (point.z or point.y)) then return nil, "no point" end
+  -- a type this DCS install does not have (paid DLC not owned): refuse rather than spawn a hole in the battery
+  if Unit.getDescByName then
+    for _, u in ipairs(preset.units) do
+      local okD, desc = pcall(Unit.getDescByName, u.type)
+      if not (okD and desc) then
+        return nil, string_format("%s: unit type %s is not installed%s", presetName, u.type,
+          preset.requires and (" (needs " .. table.concat(preset.requires, ", ") .. ")") or "")
+      end
+    end
+  end
+  local coa = opts.coalition or 1
+  local ctry = opts.country or (coa == 2 and country.id.USA or country.id.RUSSIA)
+  local tier = opts.tier and SKILL[opts.tier] and opts.tier or "REG"
+  local hdg = math_rad(opts.heading or 0)
+  local units = SP.layout(preset, opts.full)
+  local role = roleWord(preset)
+  local naval = role == "SHIP"
+  local limit = SP.limitFor(units, opts)
+  local x, z, s = SP.findSite(units, point.x, point.z or point.y, hdg, limit, opts.search or 5000,
+    naval and land.SurfaceType.WATER or land.SurfaceType.LAND)
+  if not x then
+    if naval then return nil, string_format("%s: no open water within %d m for it", presetName, opts.search or 5000) end
+    return nil, string_format("%s: no ground within %d m flat enough (%.1f deg) for it", presetName,
+      opts.search or 5000, limit)
+  end
+  SP.seq = SP.seq + 1
+  local label = opts.label or string_format("%s %d", presetName, SP.seq)
+  local function nameFor(l)
+    return string_format("%s %s %s%s", M.settings.ROLE_WORDS[role], l, tier, opts.tags and (" " .. opts.tags) or "")
+  end
+  local name = nameFor(label)
+  -- DCS replaces an existing group of the same name without a word: never do that to a mission maker's group
+  local copy = 1
+  while Group.getByName(name) do
+    copy = copy + 1
+    name = nameFor(string_format("%s #%d", label, copy))
+  end
+  if copy > 1 then label = string_format("%s #%d", label, copy) end
+  local ok, err = pcall(coalition.addGroup, ctry, naval and Group.Category.SHIP or Group.Category.GROUND,
+    { name = name, task = "Ground Nothing", units = groupUnits(name, units, x, z, hdg, SKILL[tier]), route = route(x, z, naval) })
+  if not ok then return nil, "spawn failed: " .. tostring(err) end
+  local info = { x = x, z = z, slope = s, limit = limit, units = #units }
+  M.info("spawn", string_format("%s spawned as '%s' (%d units) %.0f m from the point asked, worst slope %.1f deg (limit %.1f)",
+    presetName, name, #units, math.sqrt((x - point.x) ^ 2 + (z - (point.z or point.y)) ^ 2), s, limit))
+  if opts.aaa and preset.aaa_ring and not naval then
+    local guns = {}
+    for _, g in ipairs(preset.aaa_ring) do
+      local n = g.count or 1   -- mutate: ok every ring entry lists a count
+      for k = 1, n do
+        local a = 2 * math_pi * (k - 0.5) / n
+        local r = g.ring or 100
+        guns[#guns + 1] = { type = g.type, dx = r * math_cos(a), dz = r * math_sin(a) }
+      end
+    end
+    local gname = string_format("%s %s guns %s%s", M.settings.ROLE_WORDS.AAA, label, tier, opts.tags and (" " .. opts.tags) or "")
+    local okG = pcall(coalition.addGroup, ctry, Group.Category.GROUND,
+      { name = gname, task = "Ground Nothing", units = groupUnits(gname, guns, x, z, hdg, SKILL[tier]), route = route(x, z) })
+    if okG then info.aaa = gname end
+  end
+  return name, info
+end
+end -- janus_spawn.lua
 
 -- ==================================================================== janus_debugview.lua
 do
@@ -7385,7 +8137,7 @@ function M.start(opts)
   M.safe("setup.report", M.printReport)
   M.startEvents()
   -- Phase modules, in dependency order. Each is optional so a partial build still runs.
-  for _, mod in ipairs({ "net", "tracks", "wta", "emcon", "arm", "aaa", "gci", "debugview" }) do
+  for _, mod in ipairs({ "net", "tracks", "wta", "emcon", "arm", "aaa", "gci", "api", "statsMod", "warning", "debugview" }) do
     if M[mod] and M[mod].start then M.safe("setup.start." .. mod, M[mod].start) end
   end
   M.startScheduler()

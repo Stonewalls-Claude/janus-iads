@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased - Phase 5: 1.0 release candidate (2026-10-01)
+- Scripter API (`src/janus_api.lua`, `docs/API.md`): `JANUS.subscribe(event, fn [, key])` / `unsubscribe` for
+  `engage`, `harmDetected`, `emission`, `nodeLost`, `nodeRestored`, `nodeDegraded`; `setEmcon`, `setWeapons`,
+  `setHold`, `addGroup`; `site`, `siteNames`, `stats`.
+- Optional modules (off by default): `STATS` (per-site radar time, shots, kills, losses in dcs.log every `STATS_EVERY`
+  s and at mission end) and `BASE_WARNING` ("INCOMING! <airbase> - take cover" for C-RAM sites and sites tagged
+  `[warn]`, optional siren sound).
+- `spawnBattery` never replaces an existing group: a taken name gets `#2`, `#3`.
+- Docs for non-coders: quick start, 10-minute tutorial, recipes, names and tags, troubleshooting, glossary; settings
+  file rewritten; README rewritten for release; issue templates.
+- Demo missions (Syria: red, blue, both, naval) as Mission Editor groups, laid out on flat ground by a probe run of
+  `spawnBattery` (`tests/probe/janus_probe_demo.lua`, `tools/build_demos.py`); `tools/build_miz.py` for script-only
+  test missions.
+- Release gate bench 07 (`tests/bench/janus_bench_07.lua`, `tools/build_bench07.py`): Janus vs stock Skynet 3.5.0 on
+  the same red network and blue waves, three runs each, scored by a formula fixed before the first run.
+- `tests/test_perf.lua` budget scaled to machine speed (a reference workload), since test machines differ ~2x.
+- Plan (owner, 2026-10-01): no public beta; first public release is 1.0 after Phase 5.
+
+## Unreleased - Phase 4 built (2026-10-01; gate bench 06 passed)
+- Plan (owner, 2026-10-01): no public beta; first public release is 1.0 after Phase 5. The extra item the owner had raised for Phase 5 was Kari, already Phase 8.
+- New `janus_spawn.lua`: `JANUS.spawnBattery(preset, point, opts)` builds a battery from its real-world preset on
+  ground flat enough to fire (a spiral search out to `opts.search`, default 5 km, for a place where every unit stands
+  on land within the strictest probe-measured slope limit of its units, e.g. Hawk 2 deg, SA-2 3 deg; 8 deg for units
+  with none). Layout: fire-control or search radar at the centre, launchers on the preset ring, spaced units to the
+  side, command / power / trucks behind; `heading`, `tier` (also sets the DCS skill), `label`, `tags`, `full`
+  (optional units), `aaa` (the preset's gun ring as its own "AAA ..." group). Naval presets spawn as a ship group on
+  open water. A preset with a unit type the install lacks (paid DLC not owned) is refused. Returns the group name and
+  `{ x, z, slope, limit, units, aaa }`, or nil and the reason; Janus picks the group up at S_EVENT_BIRTH.
+- `JANUS.gci.commitRequests(coal)`: the aircraft the SAM network will not engage, one entry per aircraft across the
+  coalition's networks (none for an aircraft another network engages), with `reason` ("out of reach" / "weapons hold" /
+  "weapons tight" / "no shooter free"), `threat` and `net`; most threatening first.
+- Weapons control: doctrine `wta.weapons` "free" / "tight" (only identified aircraft are engaged) / "hold";
+  NATO_COLDWAR and US_MODERN start tight. `JANUS.gci.weapons(coal)` and `JANUS.gci.weaponsControl(coal, state [, net])`
+  (ground control; logged).
+- Ships (`SHIP ...`) are WTA shooters; a carrier group tagged `[net:CSG]` is its own network, linked wherever it sails;
+  AWACS positions follow the aircraft (cover moves with it).
+- Dual-side load (`tests/test_perf.lua`): 300 nodes, 300 moving aircraft, both coalitions, ARMs in the air: 8 ms of
+  Janus per simulated second (budget 10), a full GCI read of both sides 3 ms. WTA threat ranking prunes nodes that
+  cannot be nearer in time (same answer, tested against a brute-force reference) and the shooter loop no longer
+  rescans each target's previous shooters: 19 -> 8 ms.
+- Bench 06 (Phase 4 gate, `tests/bench/janus_bench_06.lua`, `JANUS_BENCH_06.miz`): both coalitions, every site
+  spawned by `spawnBattery`, flak traps, carrier group, AWACS by type, GCI weapons hold / free / tight.
+
 ## Unreleased - Phase 4 started (2026-09-30)
 - New `janus_aaa.lua`: gun fire discipline per doctrine `aaa` - "free" (DCS default, every shipped profile) or
   "trap" (flak trap: guns hold fire until a known target is inside 0.7 x their reach and below their ceiling, keep

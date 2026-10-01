@@ -223,7 +223,7 @@ do
   sa6("SAM B", 110000, 0)
   F.addGroup{ name = "PD Tor", units = { { type = "Tor 9A331", x = 100000, z = 3000 } } }
   local bu = bandit("Target", 300000, 300000, 3000)
-  local J = load{ RED_DOCTRINE = { base = "NATO_COLDWAR", wta = { lead = 0 } } }
+  local J = load{ RED_DOCTRINE = { base = "NATO_COLDWAR", wta = { lead = 0, weapons = "free" } } }
   F.run(3)
   local W = J.wta
   local net = J.net.networks["red/main"]
@@ -465,7 +465,7 @@ do
   F.addGroup{ name = "SAM Hawk X", units = { { type = "Hawk tr", x = 0, z = 700000 }, { type = "Hawk ln", x = 200, z = 700000 } } }
   F.addGroup{ name = "SAM Patriot X", units = { { type = "Patriot str", x = 0, z = 800000 }, { type = "Patriot ln", x = 200, z = 800000 } } }
   local bu = bandit("Target", 300000, 300000, 3000)
-  local J = load{ RED_DOCTRINE = { base = "NATO_COLDWAR", wta = { lead = 0 } } }
+  local J = load{ RED_DOCTRINE = { base = "NATO_COLDWAR", wta = { lead = 0, weapons = "free" } } }
   F.run(3)
   local W = J.wta
   local net = J.net.networks["red/main"]

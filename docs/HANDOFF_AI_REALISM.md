@@ -22,6 +22,13 @@ Janus will never fly or task aircraft; anything about attackers is for the AI re
 | **C-RAM and Patriot track weapons but never fire at them** (KAB-500, rockets, Grad, FAB-250, Kh-31P). Probe run 8: a weapons-free Patriot fired three PAC-2 at aircraft 74-99 km away and none at a Kh-31P passing 6 km from it | probe runs 1-2, 8 | Nothing to exploit on the attack side; noted so nobody plans on DCS C-RAM or Patriot defending against ARMs |
 | Avenger: 16 Stingers, 16 hits, all on aircraft | probe run 1 | - |
 
+- **When the radar shuts down decides whether an AGM-88 hits** (bench 07, Janus vs Skynet, 2026-10-01): radars that
+  went dark a minute or more before impact were missed by 0.3-2 km (Skynet runs: 40 HARMs, 0 hits); radars that went
+  dark in the last ~30 s, or not at all, were hit (Janus run 3: SA-2 Fan Song, Flat Face and a Tor). "DCS HARMs hit
+  dark radars" (Phase 3) holds only for late shutdowns.
+- **AI strike F-16s strafe the SAM after their bombs**: Mk-82 flights tasked AttackGroup made gun runs on SA-11
+  launchers (dozens of M61 hits) when the site was dark, and bombed the SA-11 when tasked against the SA-6 nearby.
+
 ## 2. DCS AI SAM behaviour that surprises people
 > **DCS 2.9.30 ("SAM acquisition below the horizon fixed"), retested 2026-09-30 (probe run 9):** the slope mutes,
 > the Hawk's ~13-15 nm launch range, identification ranges and HARM-vs-dark-radar behaviour are all unchanged. The

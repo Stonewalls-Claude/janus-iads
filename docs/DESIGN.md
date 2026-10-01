@@ -294,6 +294,17 @@ Source: `src/janus_arm.lua` (+ hooks in `janus_emcon.lua`, `janus_wta.lua`; doct
   (parked) are the real answer.
 - **Cost.** Idle networks skip nodes with no ARM state; 150 nodes / 30 aircraft stay ~1.2 ms Lua per simulated second.
 
+**Phase 5 changes from the release gate (bench 07 round 1, 2026-10-01):**
+- **Launch cue.** A linked radar that holds the shooter's track when it fires an ARM may see the missile come off it:
+  chance by sensor tier (A 0.8, B 0.5, C 0.1) x crew, the best holder decides; the network then knows the missile from
+  launch (`how = "launch"`) and the threatened site goes dark after its reaction time. Doctrine `arm.launchCue`
+  (**off in every profile for 1.0**, owner 2026-10-01: realism first, old radars stay weak; the code stays for testing.
+  **TODO after 1.0: design the launch cue properly and clean up its code**). Reason: in DCS an AGM-88 misses a radar that shuts down a minute or more before impact and hits
+  one that shuts down late; with sightings of the missile alone (tier C radars almost never), sites went dark too late.
+- **Fight inside your own reach.** Suspicion and suppression ("stays dark: SEAD nose-on") count only SEAD-type
+  aircraft outside the site's engagement range. Inside it the aircraft is attacking the site and the crew fights
+  (round 1: an SA-11 went dark for strafing F-16s at 1-3 km and was shot up).
+
 ### 4.6 Degradation and autonomy
 - Losing a C2 or its comms link means subordinate nodes switch to **autonomous mode** after a
   doctrine delay. They use only their own sensors and fall back to local EMCON rules.
@@ -407,6 +418,13 @@ salvo/layering rules, ROE and identification rules (blue: weapons tight, IFF), a
 - **Stats:** per-site emitting time, shots, kills and losses in the log, the same metrics the test
   bench uses.
 
+**As built (Phase 5, 2026-10-01):** fighter hand-off is `JANUS.gci.commitRequests` (4.10); base warning
+`src/janus_warning.lua` (`BASE_WARNING`: a C-RAM site or one tagged `[warn]` tells its side "INCOMING! <nearest airbase
+within 15 km, else the site> - take cover" when an enemy bomb, rocket, shell or air-to-ground missile comes within
+`BASE_WARNING_RANGE`, optional sound, once per weapon and per cooldown; air-to-air and surface-to-air missiles are
+ignored); debug view = `CHECK_MODE` (`src/janus_debugview.lua`); stats `src/janus_stats.lua` (`STATS`, `STATS_EVERY`,
+S_EVENT_KILL credits, report at mission end; `JANUS.stats()` always available). Tests `tests/test_phase5.lua`.
+
 ### 4.10 Ground control (GCI) interface (agreed 2026-09-29; core in Phase 2.5, rest in Phase 4)
 Janus never flies or vectors fighters. StonewallC GCI 2.0 already controls red and blue AI fighters (AEW seats,
 ground posts, SRS voices) and builds its picture from Skynet's EW radars (or "EW ..." groups). Janus replaces that
@@ -509,6 +527,16 @@ GCI tick is cheap):
 5. **Weapons control** - doctrine sets weapons free / tight for batteries near friendly fighters (JEZ vs MEZ);
    DCS's own ID never shoots friendlies, so this is about realism and fighter-or-SAM choice, not safety.
 
+**Built (Phase 4, 2026-10-01; additions to version 1, no bump):**
+- `commitRequests(coal)` -> track copies (as `tracks`) plus `reason`, `threat`, `net`, for every aircraft in a
+  network's picture that no shooter is assigned to; one entry per aircraft across the coalition's networks; none for an
+  aircraft another network engages; sorted by threat (highest first), then track number. Reasons: "out of reach" (no
+  shooter could reach it), "weapons hold", "weapons tight" (not identified), "no shooter free".
+- Weapons control per network: "free" (engage any enemy track), "tight" (identified tracks only), "hold" (none).
+  Doctrine `wta.weapons` sets the start state (NATO_COLDWAR, US_MODERN: tight; others free). `weapons(coal)` ->
+  `{ [netKey] = state }`; `weaponsControl(coal, state [, netName or key])` -> number of networks changed (0 for an
+  unknown state or network); logged "<net> weapons HOLD (was tight): ground control".
+
 **Built (Phase 2.5 core, 2026-09-30):** `src/janus_gci.lua`, contract test `tests/test_gci_api.lua` (with the reference
 consumer), bench monitor `tests/bench/janus_gci_monitor.lua`. As built:
 - `version` 1; `instance` changes each start; `on(event, fn, key)` / `off(handle)`; events `nodeLost`, `nodeRestored`
@@ -584,6 +612,15 @@ Examples (to be verified in phase 0 against sources and DCS unit types):
 Uses:
 1. **Spawning:** `JANUS.spawnBattery("SA-6", point, {coalition, skill, variant})` builds a
    realistically laid-out site, and optionally its AAA ring.
+   **As built (Phase 4, 2026-10-01, `src/janus_spawn.lua`):** `JANUS.spawnBattery(preset, point, opts)` ->
+   `name, { x, z, slope, limit, units, aaa }` or `nil, reason`. opts: `coalition` (1 / 2; country Russia / USA unless
+   `country`), `label`, `tier` GRN / REG / VET / ACE (DCS skill Average / Good / High / Excellent), `heading`, `full`
+   (optional units), `aaa` (gun ring as its own "AAA <label> guns <tier>" group), `search` (m, default 5000), `maxSlope`,
+   `tags`. Flat ground: the point first, then rings 250 m apart (6 points per ring step), the first centre where every
+   unit stands on land within the strictest `SLOPE_LIMITS` entry of the battery's types (8 deg when none). Layout: the
+   first unit of the earliest role in TR, STR, SR, SHORAD, CRAM, AAA_FC, AAA, EWR at the centre; ring units evenly on
+   their ring; spaced units to the side; the rest behind. Naval presets: a ship group on open water. Refused when a
+   unit type is not installed (paid DLC, 4.8A). Name "<role word> <label> <tier> [tags]": picked up at BIRTH.
 2. **Validation:** a Mission Editor site that is missing an essential component (e.g. SA-2 without
    a Fan Song, Patriot without a radar) is logged at start-up, so it isn't silently dead.
 3. **Engine data:** ammo, reload time and redundancy feed the kill-probability model, and the loss
@@ -615,7 +652,7 @@ Rules that keep it that simple:
   every option has a comment saying what it does. Load it with a second DO SCRIPT FILE *before*
   `janus.lua`.
 - **Settings by name (optional).** Put tags in square brackets in the group name
-  (`[skill:VET]`, `[emcon:dark]`, `[protects:SAM SA-10 Hama]`, `[hold]` = never go dark for an ARM). No file needed.
+  (`[skill:VET]`, `[emcon:dark]`, `[hold]` = never go dark for an ARM). No file needed.
 
 ### 5.0.1 It tells you what it found
 - At mission start Janus writes a **setup report** to `dcs.log`: networks per side, what each
@@ -640,6 +677,11 @@ Rules that keep it that simple:
 - **Glossary** of IADS terms (EW, EMCON, WTA, SEAD, point defence) in one line each.
 - Lua API reference kept **separate**, for the people who want it.
 
+**As built (Phase 5, 2026-10-01):** `docs/QUICKSTART.md`, `docs/TUTORIAL.md`, `docs/RECIPES.md`, `docs/NAMES.md`,
+`docs/TROUBLESHOOTING.md`, `docs/GLOSSARY.md`, `docs/API.md`; demo missions in `demo/` (Syria: red, blue, both, naval),
+built by `tools/build_demos.py` from a probe run that lets `spawnBattery` place every site on flat ground. Not yet:
+Mission Editor screenshots in the quick start (to be taken in the Mission Editor), other maps.
+
 ## 5A. Mission-maker interface (names, tags, API)
 
 ### 5.1 Names (defaults, all configurable)
@@ -651,7 +693,7 @@ SAM Patriot Incirlik  EW FPS-117      CMD CAOC            PD C-RAM Incirlik
 COMMS Relay 1         POWER Plant 2   SHIP CG Leyte Gulf  AWACS Overlord
 ```
 - **Optional tags** in brackets set explicit links or settings: `[net:North]`, `[cmd:Damascus]`,
-  `[relay:Relay 1]`, `[power:Plant 2]`, `[protects:SAM SA-10 Hama]`, `[skill:VET]` (or just `VET` in the name),
+  `[relay:Relay 1]`, `[power:Plant 2]`, `[skill:VET]` (or just `VET` in the name), `[warn]` (base warning, 4.8),
   `[emcon:dark]` (`always`, `dark`, `cued`, `periodic`, `rotating`), `[ag]` (a `COMMS` air-ground radio, 4.1A),
   `[alt:Damascus 2]` (alternate command post, 4.1A).
 - **Static objects** use the same names: a bunker named `CMD Damascus`, a comms tower `COMMS Relay 1` or
@@ -666,6 +708,12 @@ JANUS.start{ red = "SOVIET_PVO_1985", blue = "US_MODERN" }
 ```
 There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `onHarmDetected`,
 `onNodeLost`…) and runtime changes (EMCON, ROE, weapons hold).
+**As built (Phase 5, 2026-10-01, `src/janus_api.lua`; reference `docs/API.md`):** events through
+`JANUS.subscribe(event, fn [, key])` / `JANUS.unsubscribe(handle)`: `engage`, `harmDetected`, `emission`, `nodeLost`,
+`nodeRestored`, `nodeDegraded` (subscribers run under `M.safe`; same key replaces); runtime `JANUS.setEmcon`,
+`JANUS.setWeapons`, `JANUS.setHold`, `JANUS.addGroup`, `JANUS.spawnBattery`; reading `JANUS.site`, `JANUS.siteNames`,
+`JANUS.stats`. Custom doctrine: a table with `base` and the fields to change. `[protects:...]` (explicit point-defence
+assignment) is not in 1.0: point defence covers what is within the doctrine's `pdCoverRange`.
 
 ## 6. Performance
 - Driven by events. The single scheduler tick is budgeted: sensor polls, track updates and
@@ -740,11 +788,11 @@ There is a full API for spawned units, custom doctrine, callbacks (`onEngage`, `
 | 2 | Track picture, WTA with kill probability, handoffs; static command posts, radios and power as network nodes, link-radio backup channel, alternate command post (4.1A). **Done 2026-09-30** (4.6B): offline tests and mutation check green; bench 04 passed in DCS (`docs/BENCH_RESULTS.md`) | Static nodes degrade the network as designed; track picture, WTA and handoffs work on a Janus bench with no Janus errors (no Skynet comparison during the build; see Phase 5) |
 | 2.5 | **GCI feed core** (4.10, agreed 2026-09-29; Janus side **built 2026-09-30**; **gate passed 2026-09-30** on the GCI session's `StonewallC_GCIJ_BENCH` FULL / NOGCI / NOJANUS runs, `docs/BENCH_RESULTS.md`: `janus_gci.lua`, interface test 68 checks, bench monitor; GCI 2.14.0 is the GCI session's): one command hierarchy - `JANUS.gci.commandNodes` (ground, naval and airborne command nodes, AWACS as a sensor + command node, doctrine delegation field, seat binding, air-ground radio and its backup, seats moving to the alternate command post; 4.1A), `radarHeads`, `controlState`, `samZones`, `tracks` (with identification), `version`, `instance`, `on()`/`off()`, interface test; so StonewallC GCI 2.0 can be built on Janus instead of Skynet | `tests/test_gci_api.lua` green; GCI 2.0 runs on the Janus picture (`tracks`, `radarHeads`, no picture of its own) on a bench: its seats sit in Janus command nodes and fall silent when their node dies, follow Janus EW/C2 losses per doctrine, and fighters keep out of live SAM zones; the same bench runs clean with no GCI loaded |
 | 3 | Launch detection and HARM defence ladder, point defence, C-RAM. **Done 2026-09-30** (4.5C): `janus_arm.lua`, `tests/test_arm.lua` (237 checks), mutation check green; probe run 8 (red ARMs); bench 05 runs 1-2, 0 Janus errors. Closed by the owner 2026-09-30 with a bench 05 re-validation on DCS 2.9.30 (horizon fix) to follow | HARM defence works on the full bench, repeated runs |
-| 4 | Blue doctrine, naval, AWACS, AAA (fire discipline built 2026-09-30: `janus_aaa.lua`, doctrine `aaa` free / flak trap; ground observers `arm.observers`), battery-preset spawning (flat ground only), both coalitions at once, rest of `JANUS.gci` (commitRequests, weapons control; 4.10). Vietnam moved to Phase 6 (owner, 2026-09-30) | Blue bench plus dual-side performance targets met; GCI runs on the Janus picture and loses control when Janus loses C2/EW. Public **beta** (0.9 pre-release) after this phase |
+| 4 | Blue doctrine, naval, AWACS, AAA (fire discipline built 2026-09-30: `janus_aaa.lua`, doctrine `aaa` free / flak trap; ground observers `arm.observers`), battery-preset spawning (flat ground only), both coalitions at once, rest of `JANUS.gci` (commitRequests, weapons control; 4.10). Vietnam moved to Phase 6 (owner, 2026-09-30). **Built 2026-10-01:** `janus_spawn.lua` (4.9), weapons control and `commitRequests` (4.10), ships as shooters, moving AWACS cover, `tests/test_phase4.lua` (152 checks), `tests/test_perf.lua` (300 nodes / 300 aircraft both sides: 8 ms per simulated second), mutation check green; **bench 06 passed 2026-10-01** (`docs/BENCH_RESULTS.md`) | Blue bench plus dual-side performance targets met; GCI runs on the Janus picture and loses control when Janus loses C2/EW. No public beta (owner, 2026-10-01): the first public release is 1.0 after Phase 5 |
 | 5 | Optional modules, non-coder docs (quick start, tutorial, recipes, troubleshooting), demo missions, public 1.0 | A non-coder builds a working IADS from the quick start alone (the project owner, as the test user); **Janus beats Skynet 3.5.0 on the same bench, repeated runs** (the one comparison, recorded for the release) |
 | 6 | **Vietnam** (owner, 2026-09-30): NVA_VIETNAM_1965_72 tuned on a bench - flak traps on (`janus_aaa.lua`, built in Phase 4), ground spotters seeing Shrike launches (`arm.observers`, built), VHF voice reach ~150 km, Fan Song blinks, dummy sites, MiG GCI ambush stations via GCI - and US_VIETNAM_1965_72 (Hawk-defended bases). Small: mostly doctrine values on existing machinery | A Vietnam bench (NVA SA-2/AAA network vs a Shrike-armed Iron Hand/strike package) runs clean and reads like history |
 | 7 | **Iran 1970s - Spellout / Peace Ruby** (owner, 2026-09-30): the US-built Imperial Iranian radar networks (19 sites built 1962-77: Spellout in the north, Peace Ruby in the south, joined by the Peace Net troposcatter link; digitised radar data to two hardened command posts, primary and backup) with the Shah-era SAMs (Improved Hawk, Rapier). Small: two sector networks, an alternate command post (`[alt:]`) and the backup link already exist | An Iran bench (two sectors, primary post lost -> backup post takes over, sectors keep sharing over the backup link) runs clean |
-| 8 | **Iraq 1991 - Kari** (owner, 2026-09-30): the French-built KARI command system (national ADOC, sector operations centres, intercept operations centres, EW radars reporting up the chain), Soviet and western SAMs (SA-2/3/6/8, Roland), very heavy AAA, and how it fell apart (decapitation of the SOCs/IOCs, decoy drones making sites emit, HARMs against autonomous emitters). Bigger: needs a tiered command chain (ADOC > SOC > IOC) and decoy handling | A Kari bench (tiered C2, decoys, decapitation) runs clean and reads like history |
+| 8 | **Iraq 1991 - Kari** (owner, 2026-09-30; this is the extra item the owner had raised for Phase 5): the French-built KARI command system (national ADOC, sector operations centres, intercept operations centres, EW radars reporting up the chain), Soviet and western SAMs (SA-2/3/6/8, Roland), very heavy AAA, and how it fell apart (decapitation of the SOCs/IOCs, decoy drones making sites emit, HARMs against autonomous emitters). Bigger: needs a tiered command chain (ADOC > SOC > IOC) and decoy handling | A Kari bench (tiered C2, decoys, decapitation) runs clean and reads like history |
 
 ## 10. Decisions
 1. Licence: **GPL-3.0** (decided 2026-09-23).

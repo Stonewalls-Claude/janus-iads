@@ -1,67 +1,74 @@
 # Janus IADS
 
-**Integrated air defence for DCS World, for both coalitions, in one script.**
+**Integrated air defence for DCS World, for both coalitions, in one script. No coding needed.**
 
-*Janus, the two-faced Roman god, looks both ways at once.* One engine runs red and blue air
-defence networks in the same mission: command posts, early-warning radars, AWACS, SAM batteries,
-short-range and point defence (including C-RAM), AAA and naval units. Each side follows its own
-doctrine, from Vietnam-era SA-2 belts to modern Patriot/C-RAM defences.
+*Janus, the two-faced Roman god, looks both ways at once.* One engine runs red and blue air-defence networks in the
+same mission: command posts, early-warning radars, AWACS, SAM batteries, point defence (including C-RAM), guns and
+ships. Each side follows its own doctrine, from Vietnam-era SA-2 belts to modern Patriot defences.
 
-> **Status: Phase 3 (anti-radiation missile defence), in testing.** `janus.lua` builds your air-defence
-> network (command posts, relays, radios and power - also as static objects - early warning, AWACS, SAM sites),
-> keeps SAM radars dark until the network assigns them a target (weapon-target assignment with handoffs), lets
-> sites act alone when they lose their command post, and defends its radars against anti-radiation missiles
-> (crews notice them realistically, go dark, finish their shot, or stay up to fight under Tor/Pantsir cover).
-> A read-only interface (`JANUS.gci`) lets a ground-control script use the picture. Not yet: blue/naval/Vietnam
-> profiles tuned on benches (Phase 4) and the public 1.0 docs (Phase 5). See [`docs/DESIGN.md`](docs/DESIGN.md).
+What it does in your mission:
+- **SAM radars stay dark** until the network gives them a target, so they are hard to find and kill.
+- **The network picks the shooter**: the best-placed site engages each aircraft, and targets are handed between
+  sites instead of everyone firing at the same jet.
+- **Command posts, relays and power plants matter**: destroy them and sites are cut off, run on reserve power, then
+  act alone after a delay that depends on the crew.
+- **HARM defence that works in seconds**: crews notice anti-radiation missiles the way real crews could, go dark
+  for the time the missile needs, finish a shot first or stay up under Tor/Pantsir cover.
+- **Doctrines** for Soviet, modern Russian, Cold War NATO, modern US, North Vietnamese, US Vietnam-era and third-world
+  air defences; weapons tight for blue (only identified aircraft are engaged).
+- **Tells you what it found**: a plain-English setup report in `dcs.log` (and on screen in check mode) with every
+  mistake it can spot, such as a SAM on a slope too steep to fire or launchers without their radar.
 
-## Install (no coding needed)
-1. Download `janus.lua` from **Releases** (or `dist/janus.lua` from this repo).
-2. In the Mission Editor add a trigger: **MISSION START** → action **DO SCRIPT FILE** → `janus.lua`.
-3. Start your air-defence group names with a role word:
+## Install (four steps)
+1. Download `janus.lua` from **Releases**.
+2. Mission Editor -> Triggers: **MISSION START**, action **DO SCRIPT FILE** -> `janus.lua`.
+3. Start your air-defence group names with a role word: `SAM`, `EW`, `CMD`, `PD`, `AAA`, `SHIP` (and optionally
+   `COMMS`, `POWER`, `AWACS`). Example: `SAM SA-6 Hama`.
+4. Fly.
 
-   | Word | Use it for | Example |
-   |---|---|---|
-   | `SAM` | a SAM site (radar + launchers in one group) | `SAM SA-6 Hama` |
-   | `EW` | an early-warning radar | `EW North` |
-   | `CMD` | a command post | `CMD Damascus` |
-   | `PD` | point defence: Tor, Pantsir, Avenger, **C-RAM** | `PD C-RAM Incirlik` |
-   | `AAA` | guns | `AAA KS-19 Hanoi` |
-   | `SHIP` | a warship or task group | `SHIP CG Leyte Gulf` |
-   | `AWACS` | an AWACS aircraft | `AWACS Overlord` |
-   | `COMMS` / `POWER` | relay and power nodes (optional) | `POWER Plant 2` |
+Everything else is optional. Start here:
+| | |
+|---|---|
+| [Quick start](docs/QUICKSTART.md) | the four steps in detail, the setup report, check mode |
+| [Your first IADS in 10 minutes](docs/TUTORIAL.md) | an SA-6, an EW radar and a command post, step by step |
+| [Recipes](docs/RECIPES.md) | airbase defence with Patriot and C-RAM, Soviet SAM belt, Vietnam with flak traps, carrier group, harder or easier |
+| [Names and tags](docs/NAMES.md) | every role word and `[tag]` |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | symptom -> cause -> fix |
+| [Glossary](docs/GLOSSARY.md) | IADS terms in one line each |
+| [Demo missions](demo/) | red, blue, both sides, naval (Syria): open, fly, copy groups |
+| [Lua API](docs/API.md) | for scripters: events, runtime changes, battery spawning, the GCI interface |
+| [Battery presets](docs/BATTERY_PRESETS.md) | how real batteries are built, mapped to DCS units, with sources |
 
-4. Fly. Janus starts itself one second after loading and writes a **setup report** to `dcs.log`
-   (search for `JANUS [setup]`). It tells you what it recognised and anything that will not work,
-   for example: *"SAM SA-2 Hanoi: SAM SA-2 S-75 "Guideline" LN needs one of: SNR_75V"*. It also tells you
-   when a site uses paid DLC units (e.g. the WWII Assets Pack), because players without that DLC cannot join
-   the mission. Free asset packs (Currenthill's Pantsir, Tor-M2, IRIS-T SLM…) need nothing extra.
+Works on single player, hosted games and dedicated servers. Needs nothing else: no MIST, MOOSE or Skynet (it runs
+alongside them). Nothing to install on the server.
 
-### Optional settings (still no code)
-Copy [`examples/janus_settings.lua`](examples/janus_settings.lua) into your mission and load it
-with a second DO SCRIPT FILE **before** `janus.lua`. Every line has a comment saying what it does.
-Set `CHECK_MODE = true` to see the setup report on screen when the mission starts.
+## What DCS does that Janus cannot change
+Measured on test missions (`docs/PROBE_RESULTS.md`, `docs/BENCH_RESULTS.md`):
+- Launchers only fire with a radar in their own group.
+- Some SAMs do not engage from sloping ground: Hawk above about 2 degrees, SA-2 and SA-5 above 3, SA-3 and SA-10 above 5.
+- The AGM-88 HARM still hits a radar that has gone dark; Tor and Pantsir can shoot it down.
+- The Patriot does not engage anti-radiation missiles; the C-RAM engages aircraft only.
+- The Hawk launches only once its radar locks, at about 13-15 nm.
 
-## What is in the repo
+## Repository
 | Path | What |
 |---|---|
 | `dist/janus.lua` | the one file you install (built from `src/`) |
-| `src/` | the sources: core, generated unit database, battery presets, name parser, setup |
-| `docs/DESIGN.md` | the design and the phase plan |
-| `docs/UNIT_DATA_REPORT.md` | every DCS air-defence unit Janus knows, how it was classified, and source conflicts |
-| `docs/BATTERY_PRESETS.md` | real-world battery compositions mapped to DCS units, with sources |
-| `tools/` | `build_unitdb.py` (DCS datamine + Olympus → unit DB), `check_presets.py`, `build.py`, `probe_report.py` |
-| `tests/` | offline test harness (`fake_dcs.lua`, `run_all.py`) and the Phase 0 engagement probe |
-| `examples/` | settings file template |
+| `src/` | the sources, one module per file |
+| `examples/janus_settings.lua` | the optional settings file |
+| `demo/` | demo missions |
+| `docs/` | user docs above; `DESIGN.md` (design and phase plan), test results, unit data report |
+| `tools/` | unit database build, preset check, build, mission builders |
+| `tests/` | offline test harness and tests, server probes and benches |
 
 ## Building and testing (developers)
 ```
 python3 tools/build_unitdb.py --datamine <dcs-lua-datamine> --olympus <DCSOlympus>   # after a DCS patch
 python3 tools/check_presets.py        # validates presets, writes docs/BATTERY_PRESETS.md
 python3 tests/run_all.py              # builds dist/janus.lua and runs the offline tests (needs Lua 5.1)
-dcs-check --ns JANUS --tests tests src tests/probe   # the lint gate: Lua 5.1, sanitized env, zero errors
+dcs-check --ns JANUS --tests tests src tests/probe dist   # lint gate: Lua 5.1, sanitized env, zero errors
 ```
-Unit data comes from [Quaggles/dcs-lua-datamine](https://github.com/Quaggles/dcs-lua-datamine)
-and the [DCS Olympus](https://github.com/Pax1601/DCSOlympus) unit databases.
+Unit data comes from [Quaggles/dcs-lua-datamine](https://github.com/Quaggles/dcs-lua-datamine) and the
+[DCS Olympus](https://github.com/Pax1601/DCSOlympus) unit databases.
 
 Licensed under the GNU GPL v3.0. See [LICENSE](LICENSE).

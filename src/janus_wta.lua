@@ -106,20 +106,40 @@ end
 
 -- Threat of a track to the network: time until it reaches the nearest defended node (closure), low altitude and
 -- identified type raise it. Higher = more urgent.
-function W.threat(tr, net)
-  if not tr.pos then return 0 end
-  local bestT
-  local v = tr.vel
+-- `defended` (optional): the network's defended nodes as { x, z } points, from W.defended(net), when scoring many tracks.
+function W.defended(net)
+  local list = {}
   for _, n in ipairs(net.nodes) do
-    if DEFENDED[n.kind] and n.alive and n.pos then
-      local dx, dz = n.pos.x - tr.pos.x, n.pos.z - tr.pos.z
-      local d = math_sqrt(dx * dx + dz * dz)
+    if DEFENDED[n.kind] and n.alive and n.pos then list[#list + 1] = n.pos end
+  end
+  return list
+end
+
+function W.threat(tr, net, defended)
+  if not tr.pos then return 0 end
+  defended = defended or W.defended(net)
+  local bestT, bound2
+  local v = tr.vel
+  local px, pz = tr.pos.x, tr.pos.z
+  -- no node is reached sooner than distance / max(50, speed): once one is found, farther ones are skipped unmeasured
+  local fastest = 50   -- mutate: ok pruning bound: any larger value only prunes less
+  if v then fastest = math_max(50, math_sqrt(v.x * v.x + v.z * v.z)) end   -- mutate: ok pruning bound: larger only prunes less
+  for i = 1, #defended do
+    local q = defended[i]
+    local dx, dz = q.x - px, q.z - pz
+    local d2 = dx * dx + dz * dz
+    if not bound2 or d2 < bound2 then
+      local d = math_sqrt(d2)
       local closing = 50                                   -- a track that is not closing is still a threat, slowly
       if v and d > 1 then   -- mutate: ok guard against a target on top of the node
         closing = math_max(50, (v.x * dx + v.z * dz) / d)
       end
       local t = d / closing
-      if not bestT or t < bestT then bestT = t end
+      if not bestT or t < bestT then
+        bestT = t
+        local b = t * fastest
+        bound2 = b * b
+      end
     end
   end
   if not bestT then return 0 end
@@ -158,29 +178,65 @@ local function refreshAmmo(n)
   end
 end
 
+local SHOOTERS = { BATTERY = true, PD = true, NAVAL = true }   -- ships bid from their NAVAL_AD envelopes (Phase 4)
 local function shooterOK(n)
-  return (n.kind == "BATTERY" or n.kind == "PD") and n.alive and n.working and n.powered and n.linked
+  return SHOOTERS[n.kind] and n.alive and n.working and n.powered and n.linked
     and not n.autonomous and (n.engageRange or 0) > 0 and n.pos ~= nil   -- mutate: ok W.pk rejects these too
     and not (M.arm and M.arm.isDark(n))           -- dark against an ARM: someone else takes the target
+end
+
+-- Weapons control (DESIGN 4.10 item 5): "free" engage any hostile track; "tight" only identified ones (the type is
+-- known: a sensor reported it, or the doctrine's idTime of continuous track passed); "hold" no assignments at all.
+-- The doctrine sets the start state (wta.weapons); a GCI script may change it (JANUS.gci.weaponsControl).
+W.WEAPONS = { free = true, tight = true, hold = true }
+function W.weapons(net)
+  if not net.weapons then net.weapons = (net.doctrine.wta or {}).weapons or "free" end  -- mutate: ok every profile sets it
+  return net.weapons
+end
+function W.setWeapons(net, state, why)
+  if not W.WEAPONS[state] then return false end
+  local old = W.weapons(net)
+  if old ~= state then
+    net.weapons = state
+    M.info("wta", string_format("%s weapons %s (was %s)%s", net.key, string.upper(state), old, why and (": " .. why) or ""))
+  end
+  return true
+end
+
+-- why a track got no shooter this pass (for the log and JANUS.gci.commitRequests)
+local function noteUnassigned(net, tr, reason)
+  net.unassigned[tr.id] = { tr = tr, reason = reason }
+  net.heldLog = net.heldLog or {}
+  if (reason == "weapons tight" or reason == "weapons hold") and net.heldLog[tr.id] ~= reason then
+    net.heldLog[tr.id] = reason
+    M.info("wta", string_format("%s %s held: %s%s", net.key, M.tracks.label(tr), reason,
+      reason == "weapons tight" and " (not identified)" or ""))
+  end
 end
 
 function W.assign(net)
   local w = net.doctrine.wta or {}
   local prev = net.assign or {}
+  net.unassigned = {}
   if not w.enabled or not net.tracks then
     net.wtaActive = w.enabled and true or false
     net.assign = {}
     for _, n in ipairs(net.nodes) do n.assigned = nil end
     return
   end
+  local weapons = W.weapons(net)
   net.wtaActive = true
-  local shooters = {}
+  local shooters, envs = {}, {}
   for _, n in ipairs(net.nodes) do
-    if shooterOK(n) then shooters[#shooters + 1] = n end
+    if shooterOK(n) then
+      shooters[#shooters + 1] = n
+      envs[#shooters] = W.envelope(n)
+    end
     n.assigned = nil
   end
   local tracks = M.tracks.list(net.tracks)
-  for _, tr in ipairs(tracks) do tr.threat = W.threat(tr, net) end
+  local defended = W.defended(net)
+  for _, tr in ipairs(tracks) do tr.threat = W.threat(tr, net, defended) end
   table.sort(tracks, function(a, b)
     if a.threat ~= b.threat then return a.threat > b.threat end
     return a.num < b.num
@@ -199,17 +255,22 @@ function W.assign(net)
   local minPk, margin, disc, lead = w.minPk or 0.15, w.handoffMargin or 0.15, w.pdDiscount or 0.5, w.lead or 0  -- mutate: ok defaults for custom tables
   for _, tr in ipairs(tracks) do
     local bids = {}
+    local held_by = (weapons == "hold" and "weapons hold") or (weapons == "tight" and not tr.typeKnown and "weapons tight")
+    local inReach = false
     local v = tr.vel
     local reachExtra = v and lead * math_sqrt(v.x * v.x + v.z * v.z) or 0   -- mutate: ok 1 m of slack
-    for _, n in ipairs(shooters) do
-      local env = W.envelope(n)
+    local mineSet = {}
+    for _, old in ipairs(prev[tr.id] or {}) do mineSet[old.node] = true end
+    local px, pz = tr.pos.x, tr.pos.z
+    for i = 1, #shooters do
+      local n, env = shooters[i], envs[i]
       -- cheap reject before the Pk model: farther than range + lead travel (squared, horizontal)
-      local dx, dz = tr.pos.x - n.pos.x, tr.pos.z - n.pos.z
+      local dx, dz = px - n.pos.x, pz - n.pos.z
       local reach = env.R + reachExtra
-      local mine = false
-      for _, old in ipairs(prev[tr.id] or {}) do if old.node == n then mine = true end end
-      local reserved = (held[n] or 0) - (mine and 1 or 0)   -- mutate: ok a larger discount for its own target changes nothing: it is settled next
-      if (load[n] or 0) + reserved < env.channels and dx * dx + dz * dz <= reach * reach then
+      local near = dx * dx + dz * dz <= reach * reach
+      if near then inReach = true end
+      local reserved = near and (held[n] or 0) - (mineSet[n] and 1 or 0)   -- mutate: ok a larger discount for its own target changes nothing: it is settled next
+      if near and not held_by and (load[n] or 0) + reserved < env.channels then
         local pk = W.pk(n, tr, lead)
         if pk >= minPk then
           bids[#bids + 1] = { node = n, pk = pk, bid = n.kind == "PD" and pk * disc or pk }
@@ -263,10 +324,16 @@ function W.assign(net)
         else
           M.info("wta", string_format("%s %s assigned to %s (Pk %.2f)", net.key, label, c.node.name, c.pk))
         end
+        M.publish("engage", { coalition = net.coalition, net = net.key, site = c.node.name, from = from and from.name,
+          track = tr.num, unitId = tr.id, typeName = tr.typeKnown and tr.typeName or nil, pk = c.pk })
       end
     end
     if #chosen == 0 and #had > 0 and net.tracks[tr.id] then
       M.info("wta", string_format("%s %s: no shooter can engage (was %s)", net.key, label, had[1].node.name))
+    end
+    if #chosen == 0 then
+      -- out of every shooter's reach is the fighters' business whatever the weapons state; inside it, why we wait
+      noteUnassigned(net, tr, (not inReach and "out of reach") or held_by or "no shooter free")
     end
   end
   net.assign = out
@@ -278,7 +345,7 @@ function W.tick()
   if now - W.ammoAt >= W.AMMO_INTERVAL then
     W.ammoAt = now
     for _, n in ipairs(M.net.list) do
-      if (n.kind == "BATTERY" or n.kind == "PD") and n.alive then M.safe("wta.ammo", refreshAmmo, n) end  -- mutate: ok saves work only
+      if SHOOTERS[n.kind] and n.alive then M.safe("wta.ammo", refreshAmmo, n) end  -- mutate: ok saves work only
     end
   end
   for _, net in pairs(M.net.networks) do W.assign(net) end

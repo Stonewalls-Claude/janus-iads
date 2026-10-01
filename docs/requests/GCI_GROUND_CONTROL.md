@@ -200,3 +200,15 @@ The GCI session's bench (`dcs-missions/docs/design/GCI_JANUS.md` section 10) met
 NOJANUS, 0 script errors each. Recorded in `docs/BENCH_RESULTS.md`; DESIGN section 9 marks Phase 2.5 done. Open
 from here: commit requests and weapons control (`JANUS.gci` Phase 4), SRS channels for Soviet ground posts (standard).
 
+## 9. Phase 4: commit requests and weapons control (2026-10-01) - added to v1, no version bump
+- `JANUS.gci.commitRequests(coal)`: aircraft the SAM network will not engage, as hand-off requests. Each entry is a
+  track copy (same fields as `tracks`) plus `reason` ("out of reach", "weapons hold", "weapons tight" = not
+  identified, "no shooter free"), `threat` (higher = more urgent) and `net`. One entry per aircraft across the
+  coalition's networks; an aircraft any network is engaging is never listed. Most threatening first. GCI decides
+  whether to vector a flight; Janus never calls GCI.
+- `JANUS.gci.weapons(coal)` -> `{ ["blue/main"] = "free" | "tight" | "hold", ... }`.
+- `JANUS.gci.weaponsControl(coal, state [, net])` -> how many networks changed (`net` = name or key; all of the
+  coalition's networks when omitted). "hold" stops new SAM assignments (a missile already in the air is DCS's);
+  "tight" engages identified aircraft only. NATO_COLDWAR and US_MODERN start "tight"; the other profiles "free".
+- Suggested GCI use: put the SAMs on hold while friendly fighters work inside a MEZ, back to "tight" / "free" after;
+  read `commitRequests` each tick for targets to commit fighters to.

@@ -76,6 +76,13 @@ A.MODERN_EW = { ["S-300PS 64H6E sr"] = true, ["S-300PS 40B6MD sr"] = true, ["FPS
 A.SEE = { A = { factor = 0.4, p = 0.8 }, B = { factor = 0.35, p = 0.25 }, C = { factor = 0.25, p = 0.03 } }  -- mutate: ok tuning
 A.CREW = { GRN = 0.6, REG = 1.0, VET = 1.2, ACE = 1.4 }     -- mutate: ok tuning
 A.EYES = { range = 10000, smokeRange = 15000, p = 0.5 }     -- mutate: ok tuning
+-- launch cue (bench 07): a radar holding the shooter's track sees the missile come off it, chance by sensor tier
+-- (x crew). In DCS an ARM whose emitter shuts down a minute or more before impact misses by hundreds of metres; one
+-- that loses it in the last seconds still hits (bench 07: Skynet sites, dark early, took no ARM hits).
+A.LAUNCH = { A = 0.8, B = 0.5, C = 0.1 }                    -- mutate: ok tuning
+A.LAUNCH_FRESH = 2                                          -- mutate: ok tuning; the shooter's track is that recent
+A.LAUNCH_TRACK = 10   -- the radar that saw the launch keeps the missile for this long (s): the fix at the instant of
+                      -- launch carries the aircraft's velocity, not the missile's (bench 07 run 4: dead-reckoned off target)
 -- shortest dark time per DCS radar type (4.5B); others use the doctrine's minDark
 A.MIN_DARK = { ["S-300PS 40B6M tr"] = 30, ["SA-11 Buk LN 9A310M1"] = 20, RPC_5N62V = 60, SNR_75V = 15,  -- mutate: ok tuning
                ["snr s-125 tr"] = 15 }                        -- mutate: ok tuning
@@ -172,6 +179,40 @@ function A.onShot(e)
   A.flights[#A.flights + 1] = f
   A.stats.launched = A.stats.launched + 1
   M.debug("arm", string_format("%s launched: %s (crews are not told)", f.id, f.type))   -- mutate: ok debug log
+  local okI, sid = pcall(e.initiator.getID, e.initiator)
+  if okI and sid then A.launchCue(f, sid) end   -- mutate: ok defensive: DCS units always have an ID
+end
+
+-- launch cue: each enemy network whose linked radars hold the shooter's track may see the launch
+function A.launchCue(f, shooterId)
+  local now = M.now()
+  local okV, v = pcall(f.w.getVelocity, f.w)
+  if not (okV and v) then return end   -- mutate: ok defensive: DCS weapons have a velocity
+  f.vel = v
+  for _, net in pairs(M.net.networks) do
+    local d = net.doctrine.arm
+    local tr = net.tracks and net.tracks[shooterId]
+    if d and d.enabled and d.launchCue and net.coalition ~= f.coa and tr and now - tr.t <= A.LAUNCH_FRESH then
+      local best, bestP
+      for name, t in pairs(tr.sensors or {}) do
+        if now - t <= A.LAUNCH_FRESH then
+          local n = M.net.nodes[name]
+          if n and up(n) and n.linked then   -- mutate: ok defensive: only working, linked nodes feed the network picture
+            local p = A.LAUNCH[A.sensorTier(n)] * (A.CREW[n.tier] or 1)   -- mutate: ok every tier is in CREW
+            if not bestP or p > bestP then best, bestP = n, p end
+          end
+        end
+      end
+      if best and A.rand() < bestP then
+        net.arms = net.arms or {}
+        net.arms[f.id] = { f = f, id = f.id, sights = {}, first = now, last = now, pos = f.pos, vel = v,
+                           netLast = now, netPos = f.pos, netVel = v, netConfirmed = now, netBy = best.name, netHow = "launch",
+                           launchUntil = now + A.LAUNCH_TRACK }
+        M.info("arm", string_format("%s ARM %s launch seen by %s (%s)", net.key, f.id, best.name, M.tracks.label(tr)))
+        M.publish("harmDetected", { coalition = net.coalition, net = net.key, arm = f.id, site = best.name, how = "launch" })
+      end
+    end
+  end
 end
 
 -- an ARM hitting a network unit: scored, with the radar's state at the time
@@ -241,6 +282,7 @@ local function confirmNet(net, th, now)
   if not th.netConfirmed and current >= 2 then th.netConfirmed, th.netBy, th.netHow = now, by, "2 sensors" end
   if th.netConfirmed then
     M.info("arm", string_format("%s ARM %s confirmed by %s (%s)", net.key, th.id, th.netBy, th.netHow))
+    M.publish("harmDetected", { coalition = net.coalition, net = net.key, arm = th.id, site = th.netBy, how = th.netHow })
   end
 end
 
@@ -376,14 +418,21 @@ local function isSead(tr)
   local v = tr.vel
   return tr.typeKnown and A.SEAD_TYPES[tr.typeName] and v ~= nil and v.x * v.x + v.z * v.z > 2500   -- moving > 50 m/s  -- mutate: ok threshold tuning
 end
+-- a SEAD aircraft inside the site's own reach is attacking it: the crew fights instead of hiding (bench 07: an SA-11
+-- went dark for a strafing F-16 at 1 km, which then shot it up). Suspicion and suppression only count stand-off shooters.
+local function ownReach(n)
+  if n.kind == "BATTERY" or n.kind == "PD" or n.kind == "NAVAL" then return M.wta.envelope(n).R end  -- mutate: ok an EW / C2 envelope has R 0 too
+  return 0   -- mutate: ok any reach under the nearest SEAD standoff range behaves the same
+end
 local function seadNoseOn(n)
   local d = n.net.doctrine.arm
+  local reach = ownReach(n)
   local best
   local function scan(pic)
     for _, tr in pairs(pic or {}) do
       if isSead(tr) then
         local dist = horiz(tr.pos, n.pos)
-        if dist <= d.shooterRange and offAngle(tr.pos, tr.vel, n.pos) <= d.shooterCone then
+        if dist <= d.shooterRange and dist > reach and offAngle(tr.pos, tr.vel, n.pos) <= d.shooterCone then
           if not best or dist < best.dist then best = { tr = tr, dist = dist } end   -- mutate: ok nearest only names the log
         end
       end
@@ -619,12 +668,23 @@ local function busy(n)   -- mutate: ok (whole function) performance only: a busy
   return s ~= nil and (s.dark ~= nil or s.coverUntil ~= nil or s.mode ~= nil or s.reactAt ~= nil)   -- mutate: ok
 end
 
+-- a launch-cued missile is held by the radar that saw it come off the shooter for its first A.LAUNCH_TRACK seconds
+local function launchTrack(net, now)
+  for _, th in pairs(net.arms or {}) do
+    local f = th.f
+    if th.launchUntil and now <= th.launchUntil and f.pos and f.vel then
+      th.netLast, th.netPos, th.netVel, th.last, th.pos, th.vel = now, f.pos, f.vel, now, f.pos, f.vel
+    end
+  end
+end
+
 function A.tick()
   local now = M.now()
   updateFlights(now)
   for _, net in pairs(M.net.networks) do
     local d = net.doctrine.arm
     if d and d.enabled then
+      launchTrack(net, now)
       for _, f in ipairs(A.flights) do
         if f.coa ~= net.coalition and f.pos and f.vel then sense(net, f, now) end
       end

@@ -953,5 +953,173 @@ do
   noErrors("block 23")
 end
 
+-- ---------------------------------------------------------------- 24. bench 07: the launch cue; strikers inside reach
+do
+  F.reset()
+  F.rnd = 0
+  cmd()
+  sa6("SAM SA-6 A [emcon:always]", 0, 0)
+  local viper = bandit("Viper 1", 40000, 0)
+  local LC = { RED_DOCTRINE = { base = "SOVIET_PVO_1985", arm = { launchCue = true } } }
+  local J = load(LC)
+  local got = {}
+  J.subscribe("harmDetected", function(ev) got[#got + 1] = ev end)
+  F.sees["SAM SA-6 A [emcon:always]"] = { viper }
+  F.run(3)
+  local w = harm(viper, 40000, 0, 600)
+  check(count("ARM A1 launch seen by SAM SA-6 A [emcon:always] (T1 F-16C_50)") == 1, "the SA-6 holding the shooter sees the launch")
+  check(got[1] and got[1].how == "launch" and got[1].site == "SAM SA-6 A [emcon:always]", "harmDetected (launch)")
+  local th = J.net.networks["red/main"].arms.A1
+  check(th and th.netPos.x == 40000 and th.netVel.x == -600 and th.netConfirmed == F.time, "the network fix at launch")
+  w.vx, w.vz = -500, 100                         -- the missile settles on its course after launch
+  F.run(3 + 5)
+  check(th.netLast == F.time and th.netVel.x == -500 and th.netVel.z == 100 and math.abs(th.netPos.x - (40000 - 600 * 5)) < 1000,
+    "the launching radar keeps the missile for its first seconds")
+  F.run(3 + 20)
+  local last = th.netLast
+  F.run(3 + 25)
+  check(last <= 3 + 1 + 10 and th.netLast == last, "then only what other sensors see (no more free fixes)")
+  check(firstLine("SAM SA-6 A [emcon:always] DARK for") ~= nil and not F.emitting("SAM SA-6 A [emcon:always]"),
+    "dark within the reaction time of the launch")
+  -- the roll fails: no cue (tier B REG 0.5)
+  F.reset()
+  F.rnd = 0.5
+  cmd()
+  sa6("SAM SA-6 A [emcon:always]", 0, 0)
+  viper = bandit("Viper 1", 40000, 0)
+  J = load(LC)
+  F.sees["SAM SA-6 A [emcon:always]"] = { viper }
+  F.run(3)
+  harm(viper, 40000, 0, 600)
+  check(count("launch seen") == 0, "tier B REG: 50 % (the roll 0.5 fails)")
+  -- VET crew: 0.6 > 0.5 succeeds
+  F.reset()
+  F.rnd = 0.5
+  cmd()
+  sa6("SAM SA-6 A VET [emcon:always]", 0, 0)
+  viper = bandit("Viper 1", 40000, 0)
+  J = load(LC)
+  F.sees["SAM SA-6 A VET [emcon:always]"] = { viper }
+  F.run(3)
+  harm(viper, 40000, 0, 600)
+  check(count("launch seen") == 1, "VET crew: 0.5 x 1.2")
+  -- tier A sees it at 0.79; tier C (Fan Song) does not at 0.2
+  F.reset()
+  F.rnd = 0.79
+  cmd()
+  F.addGroup{ name = "PD Tor A", units = { { type = "Tor 9A331", x = 0, z = 0 } } }
+  sa2("SAM SA-2 C [emcon:always]", 0, 20000)
+  viper = bandit("Viper 1", 40000, 0)
+  J = load(LC)
+  F.sees["PD Tor A"] = { viper }
+  F.run(3)
+  harm(viper, 40000, 0, 600)
+  check(count("ARM A1 launch seen by PD Tor A") == 1, "tier A: 0.8")
+  F.reset()
+  F.rnd = 0.2
+  cmd()
+  sa2("SAM SA-2 C [emcon:always]", 0, 0)
+  viper = bandit("Viper 1", 40000, 0)
+  J = load(LC)
+  F.sees["SAM SA-2 C [emcon:always]"] = { viper }
+  F.run(3)
+  harm(viper, 40000, 0, 600)
+  check(count("launch seen") == 0, "tier C: 0.1")
+  -- two radars hold the shooter: the better one decides (Tor 0.8 beats Fan Song 0.1 at 0.5)
+  F.reset()
+  F.rnd = 0.5
+  cmd()
+  sa2("SAM SA-2 C [emcon:always]", 0, 20000)
+  F.addGroup{ name = "PD Tor A", units = { { type = "Tor 9A331", x = 0, z = 0 } } }
+  sa2("SAM SA-2 D [emcon:always]", 0, -20000)
+  viper = bandit("Viper 1", 40000, 0)
+  J = load(LC)
+  F.sees["SAM SA-2 C [emcon:always]"] = { viper }
+  F.sees["PD Tor A"] = { viper }
+  F.sees["SAM SA-2 D [emcon:always]"] = { viper }
+  F.run(3)
+  harm(viper, 40000, 0, 600)
+  check(count("ARM A1 launch seen by PD Tor A") == 1, "the best holder decides")
+  -- the Tor lost the track 5 s ago, the Fan Song still holds it: only the Fan Song's chance counts
+  F.reset()
+  F.rnd = 0.5
+  cmd()
+  sa2("SAM SA-2 C [emcon:always]", 0, 20000)
+  F.addGroup{ name = "PD Tor A", units = { { type = "Tor 9A331", x = 0, z = 0 } } }
+  viper = bandit("Viper 1", 40000, 0)
+  J = load(LC)
+  F.sees["SAM SA-2 C [emcon:always]"] = { viper }
+  F.sees["PD Tor A"] = { viper }
+  F.run(3)
+  F.sees["PD Tor A"] = {}
+  F.run(8)
+  harm(viper, 40000, 0, 600)
+  check(count("launch seen") == 0, "a sensor that lost the track 5 s ago does not count")
+  -- a stale track (last held 5 s ago), a doctrine without the cue, own side: no cue
+  F.reset()
+  F.rnd = 0
+  cmd()
+  sa6("SAM SA-6 A [emcon:always]", 0, 0)
+  viper = bandit("Viper 1", 40000, 0)
+  J = load(LC)
+  F.sees["SAM SA-6 A [emcon:always]"] = { viper }
+  F.run(3)
+  F.sees["SAM SA-6 A [emcon:always]"] = {}
+  F.run(8)
+  harm(viper, 40000, 0, 600)
+  check(count("launch seen") == 0, "the shooter's track is 5 s old: no cue")
+  F.reset()
+  F.rnd = 0
+  cmd()
+  sa6("SAM SA-6 A [emcon:always]", 0, 0)
+  viper = bandit("Viper 1", 40000, 0)
+  J = load()
+  F.sees["SAM SA-6 A [emcon:always]"] = { viper }
+  F.run(3)
+  harm(viper, 40000, 0, 600)
+  check(count("launch seen") == 0, "the shipped profiles have the launch cue off (1.0)")
+  check(J.Doctrines.SOVIET_PVO_1985.arm.launchCue == false and J.Doctrines.US_MODERN.arm.launchCue == false, "off in every profile")
+  F.reset()
+  F.rnd = 0
+  cmd()
+  sa6("SAM SA-6 A [emcon:always]", 0, 0)
+  local mig = F.addGroup{ name = "Red Jet", coalition = 1, category = AIR, units = { { type = "MiG-29S", x = 40000, z = 0, alt = 5000 } } }.units[1]
+  J = load(LC)
+  F.sees["SAM SA-6 A [emcon:always]"] = { mig }
+  F.run(3)
+  harm(mig, 40000, 0, 600)
+  check(count("launch seen") == 0, "a launch by our own side is no threat")
+  noErrors("block 24 launch cue")
+  -- a SEAD aircraft inside the site's own reach: no suspicion, no suppression; outside it: suspicion
+  F.reset()
+  F.rnd = 0
+  cmd()
+  sa6("SAM SA-6 A [emcon:always]", 0, 0)
+  F.addGroup{ name = "EW North", units = { { type = "SA-11 Buk SR 9S18M1", x = 10000, z = 30000 } } }
+  viper = bandit("Viper 1", 20000, 0)
+  J = load()
+  F.run(1)
+  local R = J.wta.envelope(node("SAM SA-6 A [emcon:always]")).R
+  check(R > 15000 and R < 30000, "SA-6 reach " .. R)
+  F.sees["EW North"] = { viper }
+  fly(viper, 1, 30, R - 1000, 0, 0, 0)        -- loitering just inside the reach, nose-on (velocity from plots)
+  fly(viper, 31, 40, R - 1000, -100)
+  check(count("suspects SEAD") == 0, "inside its own reach the crew fights: no suspicion")
+  F.reset()
+  F.rnd = 0
+  cmd()
+  sa6("SAM SA-6 A [emcon:always]", 0, 0)
+  F.addGroup{ name = "EW North", units = { { type = "SA-11 Buk SR 9S18M1", x = 10000, z = 30000 } } }
+  viper = bandit("Viper 1", 20000, 0)
+  J = load()
+  F.sees["EW North"] = { viper }
+  fly(viper, 1, 12, R + 6000, -100)
+  check(count("DARK for 30 s: suspects SEAD T1 F-16C_50 nose-on at 30 km") == 1, "just outside the reach: suspicion")
+  fly(viper, 13, 140, R + 6000 - 1200, -100)    -- flies on in: well inside the reach before the 30 s are up... and stays
+  check(not J.arm.isDark(node("SAM SA-6 A [emcon:always]")) and F.emitting("SAM SA-6 A [emcon:always]")
+    and count("may emit again") == 1, "once inside the reach: no more suppression, back up")
+  noErrors("block 24 reach")
+end
+
 print(string.format("test_arm: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

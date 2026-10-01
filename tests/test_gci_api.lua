@@ -355,7 +355,7 @@ end
 -- ---------------------------------------------------------------- 6. Janus never names a consumer
 do
   local names = { "janus_core", "janus_names", "janus_doctrine", "janus_network", "janus_tracks", "janus_wta",
-                  "janus_emcon", "janus_gci", "janus_debugview", "janus_setup" }
+                  "janus_emcon", "janus_arm", "janus_aaa", "janus_gci", "janus_debugview", "janus_setup" }
   local hits = {}
   for _, n in ipairs(names) do
     local fh = io.open("src/" .. n .. ".lua", "r")

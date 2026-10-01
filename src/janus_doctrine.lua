@@ -45,7 +45,9 @@
 --   wta              weapon-target assignment (DESIGN 4.3): enabled; pkGoal = combined kill probability wanted per
 --                    target; maxShooters per target; pdDiscount = weight on point-defence bids; handoffMargin = how much
 --                    better a new shooter must be before a target is handed over; minPk = below this nobody is
---                    assigned; lead = seconds ahead a target is judged at (so the radar is up in time)
+--                    assigned; lead = seconds ahead a target is judged at (so the radar is up in time); weapons =
+--                    "free" (engage any hostile track), "tight" (only identified tracks: IFF / NCTR / type known) or
+--                    "hold" (no new engagements) - the start state; a GCI may change it (JANUS.gci.weaponsControl)
 --   arm              anti-radiation missile defence (DESIGN 4.5, janus_arm.lua):
 --                      enabled; confirmScans sightings within confirmWindow s confirm a radar sighting (eyes or two
 --                      sensors confirm at once); netDelay per tier: a confirmed ARM reaches linked nodes this late;
@@ -60,7 +62,10 @@
 --                      suspicion per tier: chance per second that an identified SEAD aircraft nose-on within
 --                      shooterRange (shooterCone degrees) sends an emitting radar dark for suspectDark s;
 --                      observers: { range, smokeRange } = ground observers at every site see ARMs by eye in daylight
---                      (NVA spotters; without it only optical units do)
+--                      (NVA spotters; without it only optical units do); launchCue: a linked radar holding the
+--                      shooter's track may see the launch itself (chance by sensor tier, janus_arm.lua A.LAUNCH;
+--                      off in every profile for 1.0: owner, 2026-10-01, to be designed properly first);
+--                      suspicion and suppression only count SEAD aircraft outside the site's own reach
 --   aaa              gun fire discipline (janus_aaa.lua): mode "free" (fire at will) or "trap" (flak trap: hold fire
 --                    until a known target is inside trapFactor x the gun's reach, keep firing `hold` s after it left)
 
@@ -91,12 +96,13 @@ local BASE = {
   fighterControl = "ground", awacsTakeover = false,
   altTakeover = TIER(240, 150, 90, 60),
   idTime = TIER(150, 90, 60, 40),
-  wta = { enabled = true, pkGoal = 0.7, maxShooters = 1, pdDiscount = 0.5, handoffMargin = 0.15, minPk = 0.15, lead = 40 },
+  wta = { enabled = true, pkGoal = 0.7, maxShooters = 1, pdDiscount = 0.5, handoffMargin = 0.15, minPk = 0.15, lead = 40,
+          weapons = "free" },
   arm = { enabled = true, confirmScans = 3, confirmWindow = 10, netDelay = TIER(8, 5, 3, 2), reaction = TIER(6, 3, 2, 1),  -- mutate: ok tuning
           cone = 15, margin = 10, predictErr = TIER(0.3, 0.15, 0.1, 0.05), minDark = 20, maxDark = 180,  -- mutate: ok tuning
           afterMax = "restart", pdEngage = true, trustPd = false, pdCoverRange = 15000, finishShot = true,  -- mutate: ok tuning
           finishMargin = 15, accept = false, suspicion = TIER(0.02, 0.01, 0.005, 0), suspectDark = 30,  -- mutate: ok tuning
-          shooterRange = 60000, shooterCone = 20 },  -- mutate: ok tuning
+          shooterRange = 60000, shooterCone = 20, launchCue = false },  -- mutate: ok tuning
   aaa = { mode = "free", trapFactor = 0.7, hold = 20 },  -- mutate: ok tuning
 }
 
@@ -163,6 +169,7 @@ M.Doctrines = {
     linkBackup = { range = 80000, delay = TIER(15, 10, 6, 4) },
     altTakeover = TIER(120, 60, 45, 30),
     idTime = TIER(90, 60, 40, 30),     -- IFF + procedural ID
+    wta = { weapons = "tight" },       -- positive ID before a SAM fires (friendly fighters share the airspace)
   }),
   -- Data-linked picture, fast reactions, point defence always up around protected assets.
   US_MODERN = derive(BASE, {
@@ -177,6 +184,7 @@ M.Doctrines = {
     linkBackup = { range = 150000, delay = TIER(8, 5, 3, 2) },
     altTakeover = TIER(60, 30, 20, 15),
     idTime = TIER(60, 40, 25, 20),     -- IFF, NCTR, fused picture
+    wta = { weapons = "tight" },       -- positive ID before a SAM fires (JEZ/MEZ: fighters share the airspace)
     arm = { reaction = TIER(4, 2, 1, 1), netDelay = TIER(3, 2, 1, 1), suspicion = TIER(0, 0, 0, 0) },  -- mutate: ok tuning
   }),
   -- North Vietnam 1965-72: Fan Song emits for seconds only, sites cued by early warning, AAA always ready.

@@ -278,7 +278,7 @@ function M.start(opts)
   M.safe("setup.report", M.printReport)
   M.startEvents()
   -- Phase modules, in dependency order. Each is optional so a partial build still runs.
-  for _, mod in ipairs({ "net", "tracks", "wta", "emcon", "arm", "aaa", "gci", "debugview" }) do
+  for _, mod in ipairs({ "net", "tracks", "wta", "emcon", "arm", "aaa", "gci", "api", "statsMod", "warning", "debugview" }) do
     if M[mod] and M[mod].start then M.safe("setup.start." .. mod, M[mod].start) end
   end
   M.startScheduler()

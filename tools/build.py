@@ -10,8 +10,8 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ORDER = ['janus_core.lua', 'janus_units.lua', 'janus_presets.lua', 'janus_names.lua', 'janus_doctrine.lua',
-         'janus_network.lua', 'janus_tracks.lua', 'janus_wta.lua', 'janus_emcon.lua', 'janus_arm.lua', 'janus_aaa.lua', 'janus_gci.lua', 'janus_debugview.lua', 'janus_setup.lua']
+ORDER = ['janus_core.lua', 'janus_api.lua', 'janus_units.lua', 'janus_presets.lua', 'janus_names.lua', 'janus_doctrine.lua',
+         'janus_network.lua', 'janus_tracks.lua', 'janus_wta.lua', 'janus_emcon.lua', 'janus_arm.lua', 'janus_aaa.lua', 'janus_gci.lua', 'janus_stats.lua', 'janus_warning.lua', 'janus_spawn.lua', 'janus_debugview.lua', 'janus_setup.lua']
 
 
 def find_lua51():

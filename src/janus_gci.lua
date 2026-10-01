@@ -13,8 +13,12 @@
 --   JANUS.gci.controlState(coal, point [, postName])   can a ground controller reach this point, through which post
 --                                     (postName: only through that post)
 --   JANUS.gci.samZones(coal)          every working battery's engagement zone, with an `emitting` flag
+--   JANUS.gci.commitRequests(coal)    tracks the SAM network is not engaging, with the reason, most threatening first:
+--                                     the fighters' work ("out of reach", "no shooter free", "weapons tight", "weapons hold")
+--   JANUS.gci.weapons(coal)           weapons control state per network: { [net] = "free" | "tight" | "hold" }
+--   JANUS.gci.weaponsControl(coal, state [, net])   set it (the one call that changes Janus): returns networks changed
 -- Every function returns plain tables built from Janus's own state (copies, never Janus's internals) and never
--- errors for a coalition with no network. Coalitions: 1 red, 2 blue.
+-- errors for a coalition with no network. Coalitions: 1 red, 2 blue. All but weaponsControl are read-only.
 
 JANUS = JANUS or {}
 local M = JANUS
@@ -222,6 +226,50 @@ function G.samZones(coal)
     end
   end
   return out
+end
+
+-- ------------------------------------------------------------------ commit requests, weapons control (Phase 4)
+function G.commitRequests(coal)
+  local out = {}
+  local nets = netsOf(coal)
+  local engaged = {}
+  for _, net in ipairs(nets) do
+    for id in pairs(net.assign or {}) do engaged[id] = true end
+  end
+  local seen = {}
+  for _, net in ipairs(nets) do
+    for id, u in pairs(net.unassigned or {}) do
+      local tr = u.tr
+      if not engaged[id] and not seen[id] and net.tracks and net.tracks[id] and tr.pos then
+        seen[id] = true
+        local c = copyTrack(tr)
+        c.reason, c.threat, c.net = u.reason, tr.threat or 0, net.key   -- mutate: ok WTA sets threat on every track it ranks
+        out[#out + 1] = c
+      end
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.threat ~= b.threat then return a.threat > b.threat end
+    return a.num < b.num
+  end)
+  return out
+end
+
+function G.weapons(coal)
+  local out = {}
+  for _, net in ipairs(netsOf(coal)) do out[net.key] = M.wta.weapons(net) end
+  return out
+end
+
+-- netName: the network's name ("main", or its [net:] tag) or key ("red/main"); nil = every network of the coalition
+function G.weaponsControl(coal, state, netName)
+  local n = 0
+  for _, net in ipairs(netsOf(coal)) do
+    if netName == nil or net.name == netName or net.key == netName then
+      if M.wta.setWeapons(net, state, "ground control") then n = n + 1 end
+    end
+  end
+  return n
 end
 
 -- ------------------------------------------------------------------ wiring (network callbacks -> events)

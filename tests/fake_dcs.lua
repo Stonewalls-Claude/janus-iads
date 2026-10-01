@@ -41,9 +41,12 @@ timer = {
 }
 
 F.marks = {}
+F.coaText = {}     -- every outTextForCoalition { coa, text }
+F.sounds = {}      -- every outSoundForCoalition { coa, file }
 trigger = { action = {
   outText = function(s, secs) F.text[#F.text + 1] = s end,
-  outTextForCoalition = function(c, s, secs) F.text[#F.text + 1] = s end,
+  outTextForCoalition = function(c, s, secs) F.text[#F.text + 1] = s; F.coaText[#F.coaText + 1] = { coa = c, text = s, secs = secs } end,
+  outSoundForCoalition = function(c, file) F.sounds[#F.sounds + 1] = { coa = c, file = file } end,
   markToAll = function() end,
   removeMark = function(id) F.marks[id] = nil end,
   circleToAll = function(c, id) F.marks[id] = "circle" end,
@@ -60,9 +63,17 @@ math.random = function(m, n)
   return m + (F.rseq % (n - m + 1))
 end
 F.blockLOS = false
-land = { getHeight = function(p) return 0 end, isVisible = function(a, b) return not F.blockLOS end }
+-- terrain: F.heightFn(x, z) (default flat 0), F.waterFn(x, z) -> true for sea
+land = { getHeight = function(p) return F.heightFn and F.heightFn(p.x, p.y) or 0 end,
+  isVisible = function(a, b) return not F.blockLOS end,
+  SurfaceType = { LAND = 1, SHALLOW_WATER = 2, WATER = 3, ROAD = 4, RUNWAY = 5 },
+  getSurfaceType = function(p) return (F.waterFn and F.waterFn(p.x, p.y)) and 3 or 1 end }
+country = { id = { RUSSIA = 0, UKRAINE = 1, USA = 2, UK = 4, GERMANY = 6, CHINA = 27, IRAN = 34, VIETNAM = 76 } }
+F.countryCoalition = { [0] = 1, [1] = 2, [2] = 2, [4] = 2, [6] = 2, [27] = 1, [34] = 1, [76] = 1 }
 Weapon = { GuidanceType = { INS = 1, IR = 2, RADAR_ACTIVE = 3, RADAR_SEMI_ACTIVE = 4, RADAR_PASSIVE = 5, TV = 6,
-  LASER = 7, TELE = 8 } }
+  LASER = 7, TELE = 8 },
+  Category = { SHELL = 0, MISSILE = 1, ROCKET = 2, BOMB = 3, TORPEDO = 4 },
+  MissileCategory = { AAM = 1, SAM = 2, BM = 3, ANTI_SHIP = 4, CRUISE = 5, OTHER = 6 } }
 
 -- ---------------------------------------------------------------- enums
 coalition = { side = { NEUTRAL = 0, RED = 1, BLUE = 2 } }
@@ -73,8 +84,17 @@ Object.getCategory = function(o) return o:getCategory() end
 AI = { Option = { Ground = { id = { ROE = 0, ALARM_STATE = 9, ENGAGE_AIR_WEAPONS = 20 },
   val = { ROE = { OPEN_FIRE = 2, RETURN_FIRE = 3, WEAPON_HOLD = 4 }, ALARM_STATE = { AUTO = 0, GREEN = 1, RED = 2 } } },
   Air = { id = { ROE = 0 }, val = { ROE = { WEAPON_FREE = 0, WEAPON_HOLD = 4 } } } } }
-world = { event = {
-  S_EVENT_SHOT = 1, S_EVENT_HIT = 2, S_EVENT_DEAD = 8, S_EVENT_BIRTH = 15,
+-- airbases: F.airbases = { { name =, x =, z = }, ... }
+F.airbases = {}
+world = { getAirbases = function()
+  local out = {}
+  for _, a in ipairs(F.airbases) do
+    out[#out + 1] = { getName = function() return a.name end, getPoint = function() return { x = a.x, y = 0, z = a.z } end }
+  end
+  return out
+end, event = {
+  S_EVENT_SHOT = 1, S_EVENT_HIT = 2, S_EVENT_DEAD = 8, S_EVENT_MISSION_END = 12, S_EVENT_BIRTH = 15,
+  S_EVENT_KILL = 28,
 } }
 
 -- ---------------------------------------------------------------- objects
@@ -155,6 +175,9 @@ function GroupMT:enableEmission(on)
 end
 function UnitMT:getRadar() return self.group.emission ~= false end
 
+-- like DCS: the type's description, nil for a type this install lacks (F.missingTypes[type] = true: DLC not owned)
+F.missingTypes = {}
+Unit.getDescByName = function(t) if F.missingTypes[t] then return nil end return { typeName = t } end
 Unit.getByName = function(n) for _, g in pairs(F.groups) do for _, u in ipairs(g.units) do if u.name == n then return u end end end end
 Group.getByName = function(n) return F.groups[n] end
 
@@ -182,7 +205,9 @@ function WeaponMT:getPoint() return { x = self.x, y = self.y, z = self.z } end
 function WeaponMT:getVelocity() return { x = self.vx, y = 0, z = self.vz } end
 function WeaponMT:getTypeName() return self.type end
 function WeaponMT:getName() return self.name end
-function WeaponMT:getDesc() return { guidance = self.guidance, typeName = self.type } end
+function WeaponMT:getDesc()
+  return { guidance = self.guidance, typeName = self.type, category = self.category, missileCategory = self.missileCategory }
+end
 function WeaponMT:getTarget() return self.target end
 function WeaponMT:getCategory() return Object.Category.WEAPON end
 local function moveWeapons(dt)
@@ -276,6 +301,7 @@ end
 function F.launch(spec)
   local w = setmetatable({ name = "weapon" .. F.nextId, type = spec.type or "AGM_88", x = spec.x or 0, y = spec.y or 5000,
     z = spec.z or 0, vx = spec.vx or 0, vz = spec.vz or 0, guidance = spec.guidance or Weapon.GuidanceType.RADAR_PASSIVE,
+    category = spec.category or Weapon.Category.MISSILE, missileCategory = spec.missileCategory or Weapon.MissileCategory.OTHER,
     alive = true, dieAt = spec.dieAt, target = spec.target, id = F.nextId }, WeaponMT)
   F.nextId = F.nextId + 1
   F.weapons[#F.weapons + 1] = w
@@ -292,8 +318,20 @@ end
 function F.reset()
   F.time = 0; F.log = {}; F.text = {}; F.groups = {}; F.timers = {}; handlers = {}
   F.sees = {}; F.controllerError = {}; F.emissionLog = {}; F.marks = {}; F.noType = {}; F.statics = {}; F.detFlags = {}
-  F.weapons = {}; F.blockLOS = false; F.rnd = 0.999
+  F.weapons = {}; F.blockLOS = false; F.rnd = 0.999; F.heightFn = nil; F.waterFn = nil; F.added = {}; F.missingTypes = {}
+  F.coaText = {}; F.sounds = {}; F.airbases = {}
   JANUS = nil; JANUS_SETTINGS = nil
+end
+
+-- like DCS: coalition.addGroup(countryId, category, groupData) spawns the group (units x / y = map x / z) with BIRTH
+F.added = {}
+coalition.addGroup = function(ctry, cat, data)
+  local units = {}
+  for i, u in ipairs(data.units or {}) do
+    units[i] = { type = u.type, x = u.x, z = u.y, name = u.name, alt = u.alt, skill = u.skill, heading = u.heading }
+  end
+  F.added[#F.added + 1] = { country = ctry, category = cat, data = data }
+  return F.spawn{ name = data.name, coalition = F.countryCoalition[ctry] or 1, category = cat, units = units }
 end
 
 FAKE = F

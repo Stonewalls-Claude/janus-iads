@@ -15,6 +15,7 @@ local pairs, ipairs = pairs, ipairs
 E.SHOT_HOLD_MAX = 120   -- a site never stays up longer than this for one missile (lost weapons, odd targets)
 
 local POLICIES = { always = true, dark = true, cued = true, periodic = true, rotating = true }
+E.POLICIES = POLICIES
 local MANAGED = { EW = true, BATTERY = true, PD = true, AAA = true, NAVAL = true, C2 = true }
 
 local function restartTime(n)

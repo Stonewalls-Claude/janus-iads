@@ -235,3 +235,24 @@ Logs `I:\Claude-Workspace\logs\janus_bench0{4,5}_dcs2930_20260930.log`.
   missiles and one HARM ended 3.3 km short. Same picture as run 2: Janus behaves as designed; DCS HARMs still hit dark
   radars, Kh-31Ps still miss dark Hawks.
 
+## Bench 06 - Phase 4 gate (queued 2026-10-01, `JANUS_BENCH_06.miz`, testq `20261001-014750-JANUS-bench-06-Phase-4-gate`)
+Both coalitions at once on Syria, 20 min. Red SOVIET_PVO_1985 with flak traps; blue NATO_COLDWAR (weapons tight).
+Every SAM, EW, gun and ship group spawned by `JANUS.spawnBattery` at 3 s (36 presets, 12 per side far behind as load);
+A-50 "Mainstay AEW" and E-3A "Magic AEW" (no role word); CSG-USN at sea as its own network `[net:CSG]`; waves as bench
+05 plus a low pass past the SA-2 gun ring (flak trap) and Su-24Ms at the carrier group; GCI weapons hold at 420 s,
+free at 540 s, tight at 780 s. The .miz embeds the build before the DLC check in `spawnBattery` (no effect on these
+presets). Offline smoke run of the bench script: 36 presets spawned, 0 failed, 0 Janus errors.
+**Result (run 1, 2026-10-01 02:01-02:21 UTC, 1241 s, end marker seen): PASS.** Log
+`dcs-testq/results/20261001-014750-JANUS-bench-06-Phase-4-gate/`.
+| Gate item | Result |
+|---|---|
+| No Janus errors | 0 `ERROR ... JANUS`, 0 bench script errors (DCS's own Su-24M "corrupt damage model" / animator lines only) |
+| Preset spawning on flat ground | 36 spawned, 0 failed; every worst slope under its limit (Hawk 0.99-1.94 vs 2, SA-2 2.34 vs 3, SA-10 4.91 vs 5); moved 0-4500 m from the point asked; all picked up at BIRTH (37 pick-ups incl. guns) |
+| Both coalitions at once | red 21 nodes (C2 1, EW 2 incl. A-50, SAM 10, PD 6, AAA 2), blue 20 (C2 1, EW 2 incl. E-3A, SAM 11, PD 4, AAA 1, NAVAL 1) |
+| Naval | `SHIP Ike [net:CSG]` its own network; WTA assigned it Red Bait Ships; 9 SM-2ER, hits on a Su-24M and the Su-34 |
+| AWACS by type | "Mainstay AEW" / "Magic AEW" picked up with no role word |
+| Flak trap | SA-2 West guns held ("flak trap set"), OPEN FIRE on Blue Low 1, "trap reset" after; Centre guns held (no one came close) |
+| Weapons control | blue tight -> hold at 420 s ("held: weapons hold", no blue SAM fired) -> free at 540 -> tight at 780; applied to both blue networks (returns 2) |
+| commitRequests | every 60 s both sides; reasons "out of reach" / "no shooter free" / "weapons hold" as expected |
+Shots: red SAM Centre 5, SA-11 2, Osa (rear load site) 6, SA-2 guns 16; blue Patriot 10, ship 9; blue SEAD 13 AGM-88 (0 hits:
+radars dark or HARMs short). Hits: S-300 and Buk on the blue bait, Patriot on a Su-24M, SM-2 x2, Osa on Blue Low 1.
