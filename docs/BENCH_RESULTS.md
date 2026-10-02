@@ -256,3 +256,59 @@ presets). Offline smoke run of the bench script: 36 presets spawned, 0 failed, 0
 | commitRequests | every 60 s both sides; reasons "out of reach" / "no shooter free" / "weapons hold" as expected |
 Shots: red SAM Centre 5, SA-11 2, Osa (rear load site) 6, SA-2 guns 16; blue Patriot 10, ship 9; blue SEAD 13 AGM-88 (0 hits:
 radars dark or HARMs short). Hits: S-300 and Buk on the blue bait, Patriot on a Su-24M, SM-2 x2, Osa on Blue Low 1.
+
+## Bench 07 - Janus vs Skynet (Phase 5, 2026-10-01, `JANUS_BENCH_07_<run>.miz`, testq `...-JANUS-bench-07-*`)
+Same red IADS (SA-10, SA-11, SA-2, Tor, EW, command post) and the same blue SEAD/DEAD/strike waves, run once under
+Skynet v3.5.0 and once under Janus. Score (higher = better for red) = 3 x blue aircraft lost - 3 x red radars lost -
+other red units lost + HARMs that missed. One input to the owner's whole-system judgement, not the gate on its own
+(owner: losing to Skynet on this score is acceptable for realism; old radars stay worse at seeing HARMs).
+
+| Runs | Build | Score | Blue lost | Red radars lost | HARMs / hits | Red shots |
+|---|---|---|---|---|---|---|
+| S1-S3 | Skynet v3.5.0 | 28, 29, 19 (avg 25.3) | 6, 6, 5 | 2, 0, 3 | 40 / 0 | 97 |
+| J2-J3 | Janus, Phase 4 ARM ladder | 19, 18 (avg 18.5) | 5, 6 | 3, 3 | 32 / 10 | 68 |
+| J4-J5 | + launch cue | 21, 25 (avg 23) | 7, 7 | 4, 3 | 35 / 10 | 56 |
+| J7-J8 | "fix 1" (inside-reach, no cue) - rejected design | 12, 19 (avg 15.5) | 5, 7 | 4, 3 | 30 / 13 | 67 |
+| **J10-J12** | **ambush, suppress, kill** (finishShot still on) | **18, 37, 21 (avg 25.3)** | 5, 8, 4 | **2, 1, 1** | 43 / 6 | 94 |
+| **J13-J15** | **final build (finishShot off)** | **14, 38, 24 (avg 25.3)** | 6, 9, 5 | 5, 2, 1 | 50 / 10 | 107 |
+
+J1 aborted (mission copied while it started - a process error, since fixed: copy first, then queue); J6 and J9
+cancelled. All completed runs: 0 `ERROR ... JANUS` lines, 0 bench error lines.
+
+### Findings
+1. **The ambush design matches Skynet's average score (25.3 each) and loses the fewest radars of any build** (4 in
+   three runs; Skynet 5, earlier Janus builds 6-7 in two). HARM hits fell from 10-13 per two runs to 6 per three.
+2. Skynet's 0 HARM hits come from shutting down early on every HARM; Janus's old radars (tier C) see HARMs late on
+   purpose, so some hits remain. Accepted (owner).
+3. **Only the threatened site goes dark** (owner rule): in J10-J12 every ARM darkened exactly one site. In J8 two ARMs
+   darkened an SA-2 standing 11 km in front of the targeted SA-10 on the same line; kept on purpose (DESIGN 4.5B).
+4. **Spent HARMs (run 13):** a HARM fired at the SA-11 ~150 s before anyone saw it (the SA-11 had been dark for
+   minutes) pointed at the SA-6 36 km on; Janus shut the SA-6 for 148 s at ~229 s to impact. The missile died at the
+   SA-11. The same pattern appears 9 times across benches 05 and 07 (185-229 s to impact, never a hit on the site that
+   went dark); real threats all came in under 110 s. Fixed after run 15: `A.HORIZON` 120 s (DESIGN 4.5B). Runs 13-15
+   ran without the fix; it only removes these long false shutdowns.
+5. Run-to-run spread is large (Janus 18-37, Skynet 19-29): DCS AI and HARM outcomes vary, so single runs decide nothing.
+
+## Demo smoke runs (2026-10-01, `JANUS_DEMO_<RED|BLUE|BOTH|NAVAL>_T1.miz`)
+All four demos loaded from Mission Editor groups with janus_settings.lua + janus.lua: setup reports recognised every
+group (RED 13 red, BLUE 8 blue, BOTH 13 + 8, NAVAL 2 + 2), no PROBLEM lines, 0 `ERROR ... JANUS` lines. These ran the
+build before finishShot went off; the demo .miz files now carry the 1.0 build. NAVAL_T1 still had CVN-73; the demo now
+uses CVN-74 Stennis (non-Supercarrier, so demos need no DLC). NAVAL_T2 (Stennis, final build): 0 errors, the
+escort and the E-3 recognised, the escort its own [net:CSG] network; the setup report flagged the carrier group (no
+role word, but it carries Sea Sparrow / RAM / CIWS). Fixed: the carrier is now `SHIP Stennis REG [net:CSG]` (checked
+offline: both ships join blue/CSG).
+
+## Phase 5 gate - whole-system judgement (draft for the owner, 2026-10-01)
+The owner judges Janus as a whole system, not by one score. The evidence:
+
+| Question | Evidence | Verdict |
+|---|---|---|
+| Does it hold up against the incumbent? | Bench 07: Janus final build avg 25.3 = Skynet avg 25.3 (ambush build runs 10-12 also 25.3); best single run Janus 38, Skynet 29 | Even on Skynet's own scoring |
+| Does it keep its radars alive? | Red radars lost a run: Janus runs 10-12 1.3, runs 13-15 2.7 (one bad run of 5), Skynet 1.7; earlier Janus builds 3-3.5 | Close; far better than earlier Janus builds |
+| Is it realistic? | Old radars see HARMs late (6-10 hits in three runs vs Skynet 0); sites ambush inside 0.8 of reach; shut down only for detected ARMs; only the threatened site goes dark | Realism kept where the owner asked for it (score cost accepted) |
+| Is it stable? | Every bench 07 run and every demo smoke run: 0 Janus errors; perf test 300 sites + 300 aircraft inside budget | Pass |
+| Can a non-coder use it? | Four demos load from Mission Editor groups with a clean setup report; quick start, tutorial, recipes, troubleshooting | Owner's quick-start test still to do |
+| Is the code clean? | dcs-check 0 errors; mutation check green on every changed line; tests 900+ | Pass, except the launch cue (off, TODO after 1.0) |
+
+**Recommendation:** pass, subject to the owner's quick-start test. The `A.HORIZON` fix came after runs 13-15; it only
+removes false long shutdowns, so a confirming run is optional (owner's call).

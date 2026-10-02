@@ -101,14 +101,14 @@ do
   check(line ~= nil and line:find("ARM A1 inbound", 1, true) ~= nil, "dark logged with the threat")
   check(J.arm.isDark(n), "isDark")
   check(n.emcon.policy == "always", "the EMCON policy itself is unchanged")
-  -- rnd 0 -> error -15 %: tti ~ (60000 - 600*~66)/600 ~ 32 s x 0.85 + 10 margin ~ 37 s
+  -- rnd 0 -> error -15 %: tti ~ (60000 - 600*~66)/600 ~ 32 s x 0.85 + 10 margin + 30 REG caution ~ 67 s
   local s = n.arm.dark
-  check(s.untilT - s.since > 30 and s.untilT - s.since < 45, "dark time = estimated time to impact + margin")
+  check(s.untilT - s.since > 60 and s.untilT - s.since < 75, "dark time = estimated time to impact + margin + caution")
   F.run(3 + 150)
   check(count("SAM SA-6 A [emcon:always] may emit again") == 1, "released once the threat time passed")
   check(F.emitting("SAM SA-6 A [emcon:always]"), "back up (after the restart time)")
   local lost = n.arm.darkSec
-  check(lost > 25 and lost < 50, "emitting time lost is counted")
+  check(lost > 55 and lost < 80, "emitting time lost is counted")
   check(n.arm.mode == nil and n.arm.dark == nil, "no ARM state left once released")
   noErrors("block 2")
 end
@@ -264,7 +264,7 @@ do
   cmd()
   sa6("SAM SA-6 A [emcon:always]", 0, 0)
   local viper = bandit("Viper 1", 200000, 0)
-  local J = load()
+  local J = load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", arm = { finishShot = true } } }
   F.run(3)
   local n = node("SAM SA-6 A [emcon:always]")
   local own = F.launch{ shooter = F.groups["SAM SA-6 A [emcon:always]"].units[2], type = "SA-6 3M9",
@@ -276,6 +276,21 @@ do
   check(F.emitting("SAM SA-6 A [emcon:always]"), "up")
   F.run(3 + 63)                             -- ARM now < 15 s out
   check(not F.emitting("SAM SA-6 A [emcon:always]"), "dark once the ARM is inside finishMargin")
+  own.alive = false
+  -- the shipped profiles give up the shot (historically crews shut down; an SA-2/3 loses its missile)
+  F.reset()
+  F.rnd = 0
+  cmd()
+  sa6("SAM SA-6 A [emcon:always]", 0, 0)
+  viper = bandit("Viper 1", 200000, 0)
+  J = load()
+  F.run(3)
+  own = F.launch{ shooter = F.groups["SAM SA-6 A [emcon:always]"].units[2], type = "SA-6 3M9",
+    guidance = Weapon.GuidanceType.RADAR_SEMI_ACTIVE, x = 0, z = 0, vx = 800, vz = 0, target = viper }
+  harm(viper, 45000, 0, 600)
+  F.run(3 + 46)
+  check(count("finish its shot") == 0 and not F.emitting("SAM SA-6 A [emcon:always]"), "default: dark, shot given up")
+  for name, d in pairs(J.Doctrines) do check(d.arm.finishShot == false, name .. ": finishShot off") end
   own.alive = false
   noErrors("block 7")
 end
@@ -348,7 +363,7 @@ do
   noErrors("block 10")
 end
 
--- ---------------------------------------------------------------- 11. suspicion, suppression, maxDark
+-- ---------------------------------------------------------------- 11. no shutdowns on aircraft type; crew caution
 -- the Viper flies at the SA-6 at 150 m/s (one plot a second, so the track has a velocity)
 local function fly(viper, t0, t1, x0, vx, z0, vz)
   for t = t0, t1 do
@@ -357,57 +372,42 @@ local function fly(viper, t0, t1, x0, vx, z0, vz)
   end
 end
 do
+  -- an identified F-16 flying straight at the site: the crew cannot tell SEAD from strike - it stays up
   F.reset()
-  F.rnd = 0                                   -- suspicion rolls succeed
+  F.rnd = 0
   cmd()
   sa6("SAM SA-6 A [emcon:always]", 0, 0)
   F.addGroup{ name = "EW North", units = { { type = "SA-11 Buk SR 9S18M1", x = 10000, z = 30000 } } }
   local viper = bandit("Viper 1", 42000, 0)
-  local J = load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", arm = { afterMax = "restart", maxDark = 60 } } }
+  local J = load()
   F.sees["EW North"] = { viper }
-  fly(viper, 1, 12, 42000, -150)
-  local n = node("SAM SA-6 A [emcon:always]")
+  fly(viper, 1, 120, 42000, -150)
   local tr = J.net.networks["red/main"].tracks[viper:getID()]
   check(tr and tr.typeKnown and tr.typeName == "F-16C_50", "Viper identified (type flag)")
-  check(firstLine("SAM SA-6 A [emcon:always] DARK for 30 s: suspects SEAD T") ~= nil, "suspects the nose-on SEAD jet")
-  check(not F.emitting("SAM SA-6 A [emcon:always]"), "dark on suspicion")
-  check(count("EW North DARK") == 0, "a jet not pointing at the EW radar does not scare it")
-  local since = n.arm.dark.since
-  fly(viper, 13, 50, 42000 - 150 * 12, -150)
-  check(count("stays dark: T") == 1, "suppressed while the jet stays nose-on (logged once)")
-  check(J.arm.isDark(n), "still dark past the 30 s suspicion time")
-  fly(viper, 51, 80, 42000 - 150 * 50, -150)
-  check(count("maximum dark time reached") == 1, "restart doctrine: back at maxDark")
-  local rel = firstLine("may emit again: maximum dark time reached")
-  check(rel ~= nil and n.arm.dark == nil and since ~= nil, "released")
-  fly(viper, 81, 120, 42000 - 150 * 80, -150)
-  check(n.arm.dark == nil and F.emitting("SAM SA-6 A [emcon:always]"), "after a max-dark restart suspicion is calm for 60 s")
-  -- wait doctrine: stays dark past maxDark while the jet stays nose-on, released once it turns away
-  F.reset()
-  F.rnd = 0
-  cmd()
-  sa6("SAM SA-6 A [emcon:always]", 0, 0)
-  F.addGroup{ name = "EW North", units = { { type = "SA-11 Buk SR 9S18M1", x = 10000, z = 30000 } } }
-  viper = bandit("Viper 1", 55000, 0)
-  J = load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", arm = { afterMax = "wait", maxDark = 60 } } }
-  F.sees["EW North"] = { viper }
-  fly(viper, 1, 130, 55000, -150)             -- ends ~35 km out, still nose-on
-  check(J.arm.isDark(node("SAM SA-6 A [emcon:always]")), "wait doctrine: still dark after maxDark")
-  check(count("maximum dark time reached") == 0, "wait doctrine never restarts on the clock")
-  fly(viper, 131, 150, 55000 - 150 * 130, 0, 0, 200)   -- turns north: no longer nose-on
-  check(not J.arm.isDark(node("SAM SA-6 A [emcon:always]")), "released once the jet is no longer nose-on")
-  -- US_MODERN never goes dark on suspicion
-  F.reset()
-  F.rnd = 0
-  cmd()
-  sa6("SAM SA-6 A [emcon:always]", 0, 0)
-  F.addGroup{ name = "EW North", units = { { type = "SA-11 Buk SR 9S18M1", x = 10000, z = 30000 } } }
-  viper = bandit("Viper 1", 42000, 0)
-  J = load{ RED_DOCTRINE = "US_MODERN" }
-  F.sees["EW North"] = { viper }
-  fly(viper, 1, 30, 42000, -150)
-  check(count("suspects SEAD") == 0, "US_MODERN: no suspicion")
-  noErrors("block 11")
+  check(count("DARK") == 0 and F.emitting("SAM SA-6 A [emcon:always]"), "no ARM, no shutdown, whatever the aircraft type")
+  noErrors("block 11a")
+  -- caution: extra seconds down after the threat time, by crew tier (ACE 0: back at once, GRN 60)
+  local function darkFor(caution)
+    F.reset()
+    F.rnd = 0
+    cmd()
+    sa6("SAM SA-6 A [emcon:always]", 0, 0)
+    local v = bandit("Viper 1", 200000, 0)
+    load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", arm = { caution = { GRN = 60, REG = caution, VET = 10, ACE = 0 } } } }
+    F.run(3)
+    harm(v, 30000, 0, 600)
+    for t = 4, 120 do
+      F.run(t)
+      local n = node("SAM SA-6 A [emcon:always]")
+      if n.arm and n.arm.dark then return n.arm.dark.untilT - n.arm.dark.since end
+    end
+  end
+  local quick, careful = darkFor(0), darkFor(45)
+  check(quick and careful and math.abs((careful - quick) - 45) < 0.01, string.format("caution adds to the dark time (%.0f vs %.0f s)",
+    careful or -1, quick or -1))
+  local C = J.Doctrines.SOVIET_PVO_1985.arm.caution
+  check(C.ACE == 0 and C.VET == 10 and C.REG == 30 and C.GRN == 60, "caution by tier: ACE 0, VET 10, REG 30, GRN 60")
+  noErrors("block 11b")
 end
 
 -- ---------------------------------------------------------------- 12. doctrine fields
@@ -415,13 +415,13 @@ do
   F.reset()
   local J = load()
   local D = J.Doctrines
-  check(D.SOVIET_PVO_1985.arm.afterMax == "wait" and D.SOVIET_PVO_1985.arm.maxDark == 300, "SOVIET waits")
+  check(D.SOVIET_PVO_1985.arm.maxDark == 300, "SOVIET stays down up to 5 min")
   check(D.RUSSIA_MODERN.arm.trustPd == true, "RUSSIA_MODERN trusts point defence")
-  check(D.NVA_VIETNAM_1965_72.arm.maxDark == 60 and D.NVA_VIETNAM_1965_72.arm.afterMax == "restart", "NVA blinks")
+  check(D.NVA_VIETNAM_1965_72.arm.maxDark == 60, "NVA blinks")
   check(D.GENERIC_THIRD_WORLD.arm.confirmScans == 5, "third world slow to confirm")
-  check(D.US_MODERN.arm.suspicion.REG == 0, "US never dark on suspicion")
   for name, d in pairs(D) do
-    check(d.arm and d.arm.enabled == true and d.arm.reaction.REG and d.arm.netDelay.GRN and d.arm.predictErr.ACE,
+    check(d.arm and d.arm.enabled == true and d.arm.reaction.REG and d.arm.netDelay.GRN and d.arm.predictErr.ACE
+      and d.arm.caution.VET and d.arm.suspicion == nil and d.ambush,
       name .. " has the arm fields")
   end
   noErrors("block 12")
@@ -578,29 +578,20 @@ do
   check(not w2.alive and count("ARM A2 gone") == 1 and count("may emit again: ARM A2 gone") == 0, "A2 died but A1 is still inbound: stays dark")
   check(J.arm.isDark(n), "still dark for A1")
   noErrors("block 15a")
-  -- restart doctrine caps the dark time at maxDark; wait doctrine does not
+  -- maxDark caps the dark time
   F.reset()
   F.rnd = 0
   cmd()
   sa6("SAM SA-6 A [emcon:always]", 0, 0)
   viper = bandit("Viper 1", 200000, 0)
-  J = load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", arm = { afterMax = "restart", maxDark = 25 } } }
+  J = load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", arm = { maxDark = 25 } } }
   F.run(3)
   harm(viper, 24000, 0, 200)                  -- ~120 s out
   F.run(3 + 10)
   n = node("SAM SA-6 A [emcon:always]")
-  check(n.arm.dark and n.arm.dark.untilT - n.arm.dark.since <= 25.01, "restart doctrine: capped at maxDark")
-  F.reset()
-  F.rnd = 0
-  cmd()
-  sa6("SAM SA-6 A [emcon:always]", 0, 0)
-  viper = bandit("Viper 1", 200000, 0)
-  J = load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", arm = { afterMax = "wait", maxDark = 25 } } }
-  F.run(3)
-  harm(viper, 24000, 0, 200)
-  F.run(3 + 10)
-  n = node("SAM SA-6 A [emcon:always]")
-  check(n.arm.dark and n.arm.dark.untilT - n.arm.dark.since > 60, "wait doctrine: dark until the missile is due")
+  check(n.arm.dark and n.arm.dark.untilT - n.arm.dark.since <= 25.01, "capped at maxDark")
+  F.run(3 + 40)
+  check(count("may emit again: maximum dark time reached") == 1, "released at the cap, said so")
   -- a point-defence group that is not tier A still stays up to fight
   F.reset()
   F.rnd = 0
@@ -630,7 +621,7 @@ do
   noErrors("block 15b")
 end
 
--- ---------------------------------------------------------------- 16. suspicion only on real cues; overrides; switches
+-- ---------------------------------------------------------------- 16. switches, own-side ARMs, ends
 do
   local function setup(acType, doctrine, samName)
     F.reset()
@@ -643,17 +634,7 @@ do
     F.sees["EW North"] = { v }
     return J, v
   end
-  local J, v = setup("C-130")
-  for t = 1, 20 do F.move(v, 42000 - 150 * (t - 1), 0); F.run(t) end
-  check(count("suspects SEAD") == 0, "a transport nose-on is no SEAD cue")
-  J, v = setup("F-16C_50")
-  F.noType["EW North"] = true                 -- no type flag: identified only after idTime (90 s REG)
-  for t = 1, 40 do F.move(v, 42000 - 150 * (t - 1), 0); F.run(t) end
-  check(count("suspects SEAD") == 0, "an unidentified jet is no SEAD cue")
-  J, v = setup("F-16C_50", nil, "SAM SA-6 A [emcon:always] [hold]")
-  for t = 1, 20 do F.move(v, 42000 - 150 * (t - 1), 0); F.run(t) end
-  check(count("suspects SEAD") == 0, "a [hold] site never goes dark on suspicion")
-  J, v = setup("F-16C_50", { base = "SOVIET_PVO_1985", arm = { enabled = false } })
+  local J, v = setup("F-16C_50", { base = "SOVIET_PVO_1985", arm = { enabled = false } })
   for t = 1, 20 do F.move(v, 42000 - 150 * (t - 1), 0); F.run(t) end
   harm(v, 20000, 0, 600)
   F.run(50)
@@ -789,19 +770,6 @@ do
   F.run(3 + 60)
   check(count("covered by SAM Tor Guard [emcon:dark]") == 1, "a tier A battery covers like point defence")
   check(count("SAM Tor Guard [emcon:dark] ON (ARM cover)") == 1, "and is forced up for it")
-  -- Tor and point defence never go dark on suspicion
-  F.reset()
-  F.rnd = 0
-  cmd()
-  F.addGroup{ name = "SAM Tor A [emcon:always]", units = { { type = "Tor 9A331", x = 0, z = 0 } } }
-  F.addGroup{ name = "PD Kub B [emcon:always]", units = { { type = "Kub 1S91 str", x = 0, z = 1000 }, { type = "Kub 2P25 ln", x = 300, z = 1000 } } }
-  F.addGroup{ name = "EW North", units = { { type = "SA-11 Buk SR 9S18M1", x = 10000, z = 30000 } } }
-  viper = bandit("Viper 1", 42000, 0)
-  J = load()
-  F.sees["EW North"] = { viper }
-  for t = 1, 20 do F.move(viper, 42000 - 150 * (t - 1), 0); F.run(t) end
-  check(count("SAM Tor A [emcon:always] DARK") == 0 and count("PD Kub B [emcon:always] DARK") == 0,
-    "tier A and point defence never go dark on suspicion")
   -- A2 dies; A1 is known but crossing (not aimed): the site is released
   F.reset()
   F.rnd = 0
@@ -953,6 +921,39 @@ do
   noErrors("block 23")
 end
 
+-- ---------------------------------------------------------------- 25. bench 07 run 13: no site reacts to an ARM minutes out
+do
+  -- a spent HARM (300 m/s) that lost its long-dark SA-11 points at an emitting SA-6 36 km on: ~153 s out, not judged
+  F.reset()
+  F.rnd = 0
+  cmd()
+  sa6("SAM SA-11 Target", 0, 0)
+  sa6("SAM SA-6 Far [emcon:always]", -36000, 0)
+  F.addGroup{ name = "EW Side [emcon:always]", units = { { type = "55G6 EWR", x = 0, z = 8000 } } }   -- sees it, off the path
+  local viper = bandit("Viper 1", 200000, 0)
+  local J = load()
+  F.run(3)
+  J.emcon.set("SAM SA-11 Target", "dark")      -- dark long before the missile is seen (more than A.RECENT)
+  F.run(150)
+  harm(viper, 10000, 0, 300, nil, 150 + 33)  -- ends at the SA-11 33 s later
+  F.run(150 + 40)
+  check(count("EW Side [emcon:always] sees ARM A1") == 1, "the EW radar holds the missile")
+  check(count("SAM SA-6 Far [emcon:always] DARK") == 0, "a site ~150 s from impact does not go dark")
+  -- a slow ARM ~113 s from an emitting site: inside the horizon, the site goes dark
+  F.reset()
+  F.rnd = 0
+  cmd()
+  sa6("SAM SA-6 Near [emcon:always]", 0, 0)
+  F.addGroup{ name = "EW Side [emcon:always]", units = { { type = "55G6 EWR", x = 0, z = 8000 } } }
+  viper = bandit("Viper 1", 200000, 0)
+  J = load()
+  F.run(3)
+  harm(viper, 34000, 0, 300)
+  F.run(3 + 12)
+  check(count("SAM SA-6 Near [emcon:always] DARK") == 1, "a site under two minutes from impact goes dark")
+  noErrors("block 25")
+end
+
 -- ---------------------------------------------------------------- 24. bench 07: the launch cue; strikers inside reach
 do
   F.reset()
@@ -1090,35 +1091,7 @@ do
   harm(mig, 40000, 0, 600)
   check(count("launch seen") == 0, "a launch by our own side is no threat")
   noErrors("block 24 launch cue")
-  -- a SEAD aircraft inside the site's own reach: no suspicion, no suppression; outside it: suspicion
-  F.reset()
-  F.rnd = 0
-  cmd()
-  sa6("SAM SA-6 A [emcon:always]", 0, 0)
-  F.addGroup{ name = "EW North", units = { { type = "SA-11 Buk SR 9S18M1", x = 10000, z = 30000 } } }
-  viper = bandit("Viper 1", 20000, 0)
-  J = load()
-  F.run(1)
-  local R = J.wta.envelope(node("SAM SA-6 A [emcon:always]")).R
-  check(R > 15000 and R < 30000, "SA-6 reach " .. R)
-  F.sees["EW North"] = { viper }
-  fly(viper, 1, 30, R - 1000, 0, 0, 0)        -- loitering just inside the reach, nose-on (velocity from plots)
-  fly(viper, 31, 40, R - 1000, -100)
-  check(count("suspects SEAD") == 0, "inside its own reach the crew fights: no suspicion")
-  F.reset()
-  F.rnd = 0
-  cmd()
-  sa6("SAM SA-6 A [emcon:always]", 0, 0)
-  F.addGroup{ name = "EW North", units = { { type = "SA-11 Buk SR 9S18M1", x = 10000, z = 30000 } } }
-  viper = bandit("Viper 1", 20000, 0)
-  J = load()
-  F.sees["EW North"] = { viper }
-  fly(viper, 1, 12, R + 6000, -100)
-  check(count("DARK for 30 s: suspects SEAD T1 F-16C_50 nose-on at 30 km") == 1, "just outside the reach: suspicion")
-  fly(viper, 13, 140, R + 6000 - 1200, -100)    -- flies on in: well inside the reach before the 30 s are up... and stays
-  check(not J.arm.isDark(node("SAM SA-6 A [emcon:always]")) and F.emitting("SAM SA-6 A [emcon:always]")
-    and count("may emit again") == 1, "once inside the reach: no more suppression, back up")
-  noErrors("block 24 reach")
+  noErrors("block 24")
 end
 
 print(string.format("test_arm: %d passed, %d failed", passed, failed))

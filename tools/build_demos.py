@@ -248,7 +248,16 @@ def naval(m, ab, groups):
     m.static(RUSSIA, 'CMD Latakia', '.Command Center', 'ComCenter', bx + 3000, bz + 3000)
     for name, g in groups.items():
         if g['side'] == 'NAVAL':
-            m.ground(USA if g['coa'] == 2 else RUSSIA, name, g['units'], ship=True)
+            units = g['units']
+            # the public demo uses the free CVN-74 Stennis, not a Supercarrier hull (owner, 2026-10-01: players
+            # without the module must be able to fly it); the carrier is its own SHIP group in the escort's [net:CSG]
+            # network (it carries Sea Sparrow, RAM and CIWS, so without a role word the setup report flags it)
+            carrier = [u for u in units if u[0].startswith('CVN_')]
+            if carrier:
+                units = [u for u in units if not u[0].startswith('CVN_')]
+                c = carrier[0]
+                m.ground(USA, 'SHIP Stennis REG [net:CSG]', [('Stennis', c[1], c[2], c[3])], skill='Excellent', ship=True)
+            m.ground(USA if g['coa'] == 2 else RUSSIA, name, units, ship=True)
     ike = groups['SHIP Ike REG [net:CSG]']['units'][0]
     m.plane(USA, 'Magic AEW', 'E-3A', 1, [(ike[1] - 60000, ike[2] - 40000), (ike[1] + 20000, ike[2] - 40000)], 9000,
             'AWACS', awacs_tasks(9000), fuel=60000, speed=200)
@@ -285,7 +294,7 @@ DEMOS = {
              'two red Su-25T player slots.', 'SOVIET_PVO_1985', 'US_MODERN', 'true'),
     'BOTH': ('Janus IADS demo - BOTH sides at once: the red Hama network and the blue Incirlik network, each with its '
              'own doctrine, AWACS and player slots, and AI waves both ways.', 'SOVIET_PVO_1985', 'US_MODERN', 'true'),
-    'NAVAL': ('Janus IADS demo - NAVAL. A US carrier escort (Ticonderoga, two Arleigh Burkes, Perry) off Latakia as its '
+    'NAVAL': ('Janus IADS demo - NAVAL. A US carrier group (CVN-74 Stennis; escort Ticonderoga, two Arleigh Burkes, Perry) off Latakia, the escort as its '
               'own network ([net:CSG]) under an E-3, against Su-24 bait and Tu-22M3s with Kh-22; a Russian surface group '
               'to the north. Two F/A-18C player slots.', 'SOVIET_PVO_1985', 'US_MODERN', 'false'),
 }

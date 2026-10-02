@@ -8,6 +8,19 @@
   s and at mission end) and `BASE_WARNING` ("INCOMING! <airbase> - take cover" for C-RAM sites and sites tagged
   `[warn]`, optional siren sound).
 - `spawnBattery` never replaces an existing group: a taken name gets `#2`, `#3`.
+- SAM behaviour reworked with the owner after bench 07 round 1 (DESIGN 4.5C "Phase 5: ambush, suppress, kill"):
+  cued SAMs ambush (radar up only once the target is inside doctrine `ambush` x range: Soviet / Russian 0.8, NATO / US
+  1.0, Vietnam 0.7); sites go dark only for detected ARMs, never because of an aircraft's type (suspicion and the
+  "wait while a SEAD jet is nose-on" rule removed, with their doctrine fields `suspicion`, `suspectDark`,
+  `shooterRange`, `shooterCone`, `afterMax`); `arm.caution` by crew tier (ACE 0 s ... GRN 60 s) before a site comes
+  back after an ARM threat. ARM launch cue built for testing, off in every profile (TODO after 1.0: proper design and
+  clean code). Command post's educated guess about SEAD raids planned after 1.0 (DESIGN 4.5D).
+- Only the site an ARM is heading for goes dark, never the network (owner). No site reacts to an ARM more than
+  `A.HORIZON` (120 s) from impact; it is judged again as it closes (bench 07 run 13: a spent HARM that lost its target
+  shut an SA-6 36 km on for 148 s).
+- Demo NAVAL: the carrier is its own `SHIP Stennis REG [net:CSG]` group (it carries Sea Sparrow, RAM and CIWS).
+- `arm.finishShot` off in every profile: a site no longer stays up to guide its own missile while an ARM comes in
+  (historically crews shut down and gave up the shot).
 - Docs for non-coders: quick start, 10-minute tutorial, recipes, names and tags, troubleshooting, glossary; settings
   file rewritten; README rewritten for release; issue templates.
 - Demo missions (Syria: red, blue, both, naval) as Mission Editor groups, laid out on flat ground by a probe run of

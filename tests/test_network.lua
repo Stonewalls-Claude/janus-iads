@@ -69,7 +69,7 @@ do
   F.sees["EW North"] = { b }
   F.run(20)
   check(not F.emitting("SAM SA-10 Hama"), "track far outside engage range: SA-10 stays dark")
-  F.move(b, 150000, 0)                          -- 100 km from the SA-10: inside 120 km x 1.3
+  F.move(b, 140000, 0)                          -- 90 km from the SA-10: inside the 0.8 x 120 km ambush ring
   F.run(21)
   check(not F.emitting("SAM SA-10 Hama"), "cue delay not yet over")
   F.run(40)
@@ -82,16 +82,43 @@ do
   check(F.emitting("SAM SA-10 Hama"), "cue hold keeps it up for 30 s")
   F.run(100)
   check(not F.emitting("SAM SA-10 Hama"), "down after cue hold")
-  F.move(b, 150000, 0)                          -- comes back
+  F.move(b, 140000, 0)                          -- comes back
   F.run(F.time + 30)
   check(F.emitting("SAM SA-10 Hama"), "back up when cued again")
+end
+
+-- ---------------------------------------------------------------- 2a. ambush: cued early, up only once the target is firmly in the ring
+do
+  F.reset()
+  redNetwork()
+  local b = bandit("Viper 1", 150000, 0)        -- 100 km from the SA-10: cued (inside 1.3 x 120 km), outside 0.8 x 120 km
+  local J = load()
+  F.sees["EW North"] = { b }
+  F.run(40)
+  check(not F.emitting("SAM SA-10 Hama"), "SOVIET ambush 0.8: dark while the target is 100 km out")
+  check(J.net.nodes["SAM SA-10 Hama"].assigned ~= nil, "already assigned: the crew is ready")
+  F.move(b, 145000, 0)                          -- 95 km: inside the 96 km ring; cue delay long over
+  F.run(42)
+  check(F.emitting("SAM SA-10 Hama"), "up as soon as it is inside the ring")
+  F.move(b, 151000, 0)                          -- drifts back out to 101 km: stays up (cue hold, no flicker)
+  F.run(50)
+  check(F.emitting("SAM SA-10 Hama"), "once up, the ring does not switch it off")
+  -- the shipped depths
+  F.reset()
+  redNetwork()
+  b = bandit("Viper 1", 150000, 0)
+  J = load{ RED_DOCTRINE = "NATO_COLDWAR" }
+  F.sees["EW North"] = { b }
+  F.run(40)
+  check(J.Doctrines.NATO_COLDWAR.ambush == 1.0 and J.Doctrines.US_MODERN.ambush == 1.0 and J.Doctrines.RUSSIA_MODERN.ambush == 0.8
+    and J.Doctrines.NVA_VIETNAM_1965_72.ambush == 0.7 and J.Doctrines.SOVIET_PVO_1985.ambush == 0.8, "ambush depth per doctrine")
 end
 
 -- ---------------------------------------------------------------- 2b. restart rule with a custom doctrine table
 do
   F.reset()
   redNetwork()
-  local b = bandit("Viper 3", 150000, 0)
+  local b = bandit("Viper 3", 140000, 0)
   local J = load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", restart = { LR = 60 }, cueHold = 5, minOn = 5 } }
   F.sees["EW North"] = { b }
   F.run(40)
@@ -101,7 +128,7 @@ do
   local offAt
   for t = 41, 120 do F.run(t); if not F.emitting("SAM SA-10 Hama") then offAt = t; break end end
   check(offAt ~= nil, "went dark after the short cue hold")
-  F.move(b, 150000, 0)
+  F.move(b, 140000, 0)
   F.run(offAt + 30)
   check(not F.emitting("SAM SA-10 Hama"), "restart rule: still dark 30 s later although cued (LR restart 60 s)")
   F.run(offAt + 70)
@@ -149,7 +176,7 @@ do
   F.run(5)
   F.killGroup(F.groups["CMD Hama"])
   F.run(12)
-  F.move(b, 150000, 0)
+  F.move(b, 140000, 0)
   F.run(50)
   check(not F.emitting("SAM SA-10 Hama"), "voice cue: not up after network delay alone (6 s REG)")
   F.run(100)
@@ -287,7 +314,7 @@ end
 do
   F.reset()
   redNetwork()
-  local b = bandit("Viper 2", 150000, 0)
+  local b = bandit("Viper 2", 140000, 0)
   load()
   F.controllerError["EW North"] = true
   F.sees["SAM SA-10 Hama"] = { b }
@@ -337,7 +364,7 @@ end
 do
   F.reset()
   redNetwork()
-  local b = bandit("Viper 5", 150000, 0)
+  local b = bandit("Viper 5", 140000, 0)
   local J = load{ RED_DOCTRINE = { base = "SOVIET_PVO_1985", cueHold = 2, minOn = 2 } }
   local sa10
   local function holds()
@@ -367,7 +394,7 @@ do
   F.run(90)
   check(not F.emitting("SAM SA-10 Hama"), "dark once the missile is gone")
   -- second engagement: a new hold is reported again
-  F.move(b, 150000, 0)
+  F.move(b, 140000, 0)
   F.run(200)
   check(F.emitting("SAM SA-10 Hama"), "up again when cued")
   local m2 = missile(b)
@@ -381,7 +408,7 @@ do
   F.run(200 + 135)
   check(not F.emitting("SAM SA-10 Hama"), "released after SHOT_HOLD_MAX")
   -- a missile whose target is already dead does not hold the radar
-  F.move(b, 150000, 0)
+  F.move(b, 140000, 0)
   F.run(500)
   check(F.emitting("SAM SA-10 Hama"), "up again for the third engagement")
   F.fire({ id = world.event.S_EVENT_SHOT, initiator = ln, weapon = missile(b) })

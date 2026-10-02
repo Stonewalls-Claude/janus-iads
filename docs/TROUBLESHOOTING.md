@@ -17,7 +17,8 @@ logged on a line containing `JANUS [`.
 | HARMs always hit | In DCS an AGM-88 still hits a radar after it has gone dark | Add point defence (`PD Tor ...`, `PD Pantsir ...`) near valuable sites: they stay up and shoot HARMs down. Under `RUSSIA_MODERN` a covered site stays up too |
 | The Patriot does not shoot at missiles | In DCS the Patriot does not engage anti-radiation missiles | Nothing Janus can change. Avengers and fighters for leakers |
 | C-RAM does not shoot at bombs or rockets | In DCS the C-RAM engages aircraft only | Nothing Janus can change. `BASE_WARNING = true` still warns players |
-| A site stays dark for minutes after a HARM | Soviet doctrine waits while a SEAD aircraft stays pointed at it | That is the doctrine (`SOVIET_PVO_1985` waits; others come back sooner). Tag the site `[hold]` to keep it up |
+| A site stays dark for minutes after a HARM | More HARMs keep coming (suppression), or a careful crew: it stays down for the missile's flight, plus up to a minute for green crews, then needs its system's restart time | That is the doctrine. A VET or ACE crew comes back sooner; tag the site `[hold]` to keep it up |
+| SAMs let aircraft get close before they fire | Ambush: Soviet, Russian and Vietnamese doctrines bring the radar up only once the target is deep inside the ring (0.8 or 0.7 of the reach) | That is the point. NATO and US doctrines come up at full reach |
 | A static named `SAM ...` or `EW ...` is ignored | Only command posts, relays and power plants can be static objects | Use a unit group for SAMs and radars |
 | "uses a DCS: WWII Assets Pack unit" | That unit is paid DLC | Players and servers without the DLC cannot load the mission. Use non-DLC units or say so in the briefing |
 | Two networks do not share targets | Sites are tagged with different `[net:...]` names | Same tag (or no tag) for sites that should work together |

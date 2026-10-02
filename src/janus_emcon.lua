@@ -148,6 +148,9 @@ function E.want(n, policy, now)
       em.cuedAt = em.cuedAt or now
       em.lastCue = now
       local delay = (d.cueDelay[n.tier] or d.cueDelay.REG) + (n.feedDelay or 0) + (n.linkDelay or 0)  -- mutate: ok coverage always sets feedDelay; tiers always present
+      -- ambush: the crew is ready from the cue on, but the radar waits until the target is firmly in the ring
+      local ring = (M.wta and (n.kind == "BATTERY" or n.kind == "PD") and M.wta.envelope(n).R or n.engageRange) * d.ambush  -- mutate: ok every built network has the wta module
+      if not em.on and dist > ring then return false, string_format("ambush: %s at %.0f km", M.tracks.label(tr), dist / 1000) end  -- mutate: ok km in the log text
       if byWta then
         if now - em.cuedAt >= delay then return true, string_format("assigned %s, %.0f km", M.tracks.label(tr), dist / 1000) end  -- mutate: ok km in the log text
         return em.on == true, "cue pending"

@@ -13,7 +13,7 @@ What it does in your mission:
 - **Command posts, relays and power plants matter**: destroy them and sites are cut off, run on reserve power, then
   act alone after a delay that depends on the crew.
 - **HARM defence that works in seconds**: crews notice anti-radiation missiles the way real crews could, go dark
-  for the time the missile needs, finish a shot first or stay up under Tor/Pantsir cover.
+  only at the site the missile is heading for, for the time it needs, or stay up under Tor/Pantsir cover.
 - **Doctrines** for Soviet, modern Russian, Cold War NATO, modern US, North Vietnamese, US Vietnam-era and third-world
   air defences; weapons tight for blue (only identified aircraft are engaged).
 - **Tells you what it found**: a plain-English setup report in `dcs.log` (and on screen in check mode) with every

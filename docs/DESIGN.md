@@ -207,7 +207,7 @@ Four cues, each checked per site at the scheduler rate. The first one to fire ma
 |---|---|---|---|---|
 | **A**: built to kill precision weapons | Tor, Pantsir | yes, tens of km at best | radar + optics | engage it; site keeps emitting |
 | **B**: sees it late, can't reliably hit it | S-300PS, SA-11, SA-6, Hawk, Patriot | sometimes, late in the dive | radar (late) + behaviour + network | go dark, decoy, or accept |
-| **C**: effectively blind to it | SA-2, SA-3, SA-5, older EW radars | rarely | behaviour, observers, network | go dark on suspicion; crew tier decides |
+| **C**: effectively blind to it | SA-2, SA-3, SA-5, older EW radars | rarely | observers, network | go dark when the network reports an ARM; crew tier decides |
 
 Probe v3 logs the range at which each DCS radar first holds each weapon, so the filter above is tuned against
 measured DCS behaviour instead of guesses. All figures here are gameplay defaults from open sources, not published
@@ -260,32 +260,34 @@ Source: `src/janus_arm.lua` (+ hooks in `janus_emcon.lua`, `janus_wta.lua`; doct
     within 1.5 s of each other.
   - *network*: a confirmed ARM reaches every linked node after `netDelay[tier]` (the confirming node at once);
     unlinked nodes know only what they saw themselves.
-  - *suspicion*: an identified SEAD type (F-16C, F/A-18C, F-4E, Tornado, Su-24M, Su-34, Su-25T, JF-17), moving, nose-on
-    within `shooterCone` degrees and `shooterRange`, gives an emitting radar a `suspicion[tier]` chance per second of
-    going dark for `suspectDark` s (never tier A, point defence, [hold] sites or a site with its own missile flying).
 - **Which radar is threatened.** From what the node knows (its own last fix or the network's, dead-reckoned): a missile
   within `cone` degrees of the radar (or within 2 km), and (linked nodes) no more than 10 km beyond the first radar on
   its path that was emitting (or dark for < 120 s) when the network first judged it - fixed per missile, so the sites
   behind do not go dark one after another - and nobody once the missile is past that radar (bench 05). Time to impact =
   distance / max(missile speed, half the table speed). The most urgent threat is the one acted on. No radar holds an
   ARM beyond 50 km.
+- **Only the threatened site goes dark** (owner, 2026-10-01): never the network. Sites off the missile's path, behind
+  the target or elsewhere keep fighting; only point defence near the target changes state (forced up). Two sites on
+  the same line within 10 km of each other may both go dark (bench 07 run 8: SA-2 11 km in front of the SA-10, both
+  dark for one HARM): the crews cannot tell which one the missile is homing on, and in DCS a late shutdown is a hit,
+  so this is kept on purpose. **No site reacts to an ARM more than 120 s from impact** (`A.HORIZON`; judged again as
+  it closes): bench 07 run 13 shut an SA-6 for 148 s against a spent HARM ~229 s out that had lost its SA-11; every
+  real threat in the bench runs came in under 110 s, and a site still has the 60+ s it needs in DCS.
 - **Ladder,** after `reaction[tier]` s: *engage* (tier A or point defence with `pdEngage`: forced up), *accept* ([hold] or
   doctrine `accept`), *covered* (`trustPd` and a working point-defence or tier-A site within `pdCoverRange`: stays up),
   *finish* (`finishShot`, own missile in flight, more than `finishMargin` s to impact), else *dark* for time to impact
   x (1 +- `predictErr[tier]`) + `margin`, at least the per-type minimum (SA-10 30 s, SA-11 20, SA-5 60, SA-2/3 15) or
   `minDark`. Point defence and tier-A sites within `pdCoverRange` of any threatened site are forced up (10 s, renewed).
-- **Holding dark (suppression).** When the dark time runs out, a site stays dark in 5 s steps while an identified SEAD
-  aircraft is still nose-on; `afterMax = "restart"` caps the whole dark period at `maxDark` (then 60 s with no new
-  suspicion), `"wait"` has no cap. A site is released early when the network watched the missile die (last fix within
+- **Holding dark (suppression).** A site stays dark while detected ARMs keep coming at it, never longer than
+  `maxDark`; then it waits its crew's `caution[tier]` and the system's restart time (Phase 5, 4.5C). A site is released early when the network watched the missile die (last fix within
   3 s of its end) and no other known missile is aimed at it; it is then logged as "gone N km short (shot down?)" or
   "gone at a radar".
 - **EMCON / WTA.** The ARM decision overrides the EMCON policy (dark beats minOn and the own-missile hold; forced-up
   still waits for the restart time). WTA offers no targets to a site dark against an ARM.
 - **Scoring.** Per node: seconds dark, times dark, ARM hits (with the radar state at the hit); per network summary every
   300 s; `JANUS.arm.stats` (launched, hits, hits on dark radars, missiles seen to die short).
-- **Doctrines.** SOVIET_PVO waits out the SEAD aircraft (`afterMax = "wait"`, maxDark 300); RUSSIA_MODERN trusts
-  Tor/Pantsir cover; US_MODERN never goes dark on suspicion and reacts fastest; NVA blinks (maxDark 60, minDark 10,
-  higher suspicion); GENERIC_THIRD_WORLD confirms slowly (5 sightings) and reacts late.
+- **Doctrines.** SOVIET_PVO stays down longest (maxDark 300); RUSSIA_MODERN trusts Tor/Pantsir cover; US_MODERN
+  reacts fastest; NVA blinks (maxDark 60, minDark 10); GENERIC_THIRD_WORLD confirms slowly (5 sightings) and reacts late.
 - **Not built (parked):** decoy emitters, relocation (8B research), C-RAM against weapons (DCS never does it).
 - **Retested on DCS 2.9.30 (horizon fix), 2026-09-30:** slope limits, the Hawk's short reach and benches 04/05
   unchanged (probe run 9).
@@ -294,16 +296,32 @@ Source: `src/janus_arm.lua` (+ hooks in `janus_emcon.lua`, `janus_wta.lua`; doct
   (parked) are the real answer.
 - **Cost.** Idle networks skip nodes with no ARM state; 150 nodes / 30 aircraft stay ~1.2 ms Lua per simulated second.
 
-**Phase 5 changes from the release gate (bench 07 round 1, 2026-10-01):**
-- **Launch cue.** A linked radar that holds the shooter's track when it fires an ARM may see the missile come off it:
-  chance by sensor tier (A 0.8, B 0.5, C 0.1) x crew, the best holder decides; the network then knows the missile from
-  launch (`how = "launch"`) and the threatened site goes dark after its reaction time. Doctrine `arm.launchCue`
-  (**off in every profile for 1.0**, owner 2026-10-01: realism first, old radars stay weak; the code stays for testing.
-  **TODO after 1.0: design the launch cue properly and clean up its code**). Reason: in DCS an AGM-88 misses a radar that shuts down a minute or more before impact and hits
-  one that shuts down late; with sightings of the missile alone (tier C radars almost never), sites went dark too late.
-- **Fight inside your own reach.** Suspicion and suppression ("stays dark: SEAD nose-on") count only SEAD-type
-  aircraft outside the site's engagement range. Inside it the aircraft is attacking the site and the crew fights
-  (round 1: an SA-11 went dark for strafing F-16s at 1-3 km and was shot up).
+**Phase 5: ambush, suppress, kill (owner, 2026-10-01; after bench 07 round 1).** How a SAM site is defeated in
+Janus is how Wild Weasels did it: one flight suppresses it, a DEAD flight kills it while it is down.
+- **Ambush.** A cued SAM radar stays dark until its target is firmly inside its ring: doctrine `ambush` x the
+  engagement range (Soviet and Russian 0.8, NATO and US 1.0, Vietnam 0.7). The crew is ready from the cue (cueFactor
+  x range, cue delay counted from then); once up, the ring does not switch it off (cue hold applies).
+- **EW and AWACS watch.** They hold the picture and pass detected ARMs over the network (doctrine netDelay).
+- **Protection.** A SAM goes dark only for an anti-radiation weapon that it, or the network (EW, AWACS, other sites),
+  has detected - never because of an aircraft's type: a crew cannot tell a strike from a SEAD or DEAD flight. The
+  former type-based suspicion and "stay dark while a SEAD jet is nose-on" rules are removed, and so is the
+  round-1 "fight inside your own reach" patch (it treated a symptom of them).
+- **Suppression.** While known ARMs keep coming the site stays down (each new missile extends the dark time, up to
+  maxDark): the window for the DEAD flight.
+- **Coming back.** After the threat time the site comes up again after `arm.caution` by crew tier (ACE 0 s - at
+  once; VET 10, REG 30, GRN 60) and then the system's own restart time (4.5B) - how long that SAM type really takes.
+- **Point defence** (Tor, Pantsir) stays up and shoots ARMs down (unchanged).
+- **Finishing the shot** is off in every profile (owner, 2026-10-01): historically crews shut down when an ARM came
+  and gave up the shot - an SA-2/3 loses its command-guided missile, an SA-6/11 its illumination. Kept as `arm.finishShot`.
+- **Launch cue** (a radar holding the shooter sees the missile come off it): built for testing, **off in every
+  profile for 1.0**; TODO after 1.0: design it properly and clean up its code (owner).
+- Old radar sets stay worse at seeing ARMs than modern ones (sensor tiers, 4.5A) - realism before score (owner).
+
+### 4.5D Command post's educated guess (design after 1.0)
+A crew cannot tell what a raid is, but a command post (ground C2, a ship's CIC, an AWACS command node) can make an
+educated guess from the picture: aircraft holding at stand-off range nose-on to its sites without coming in, a
+package splitting into a pointed element and a following one. The post may then order the threatened sector's
+SAMs to stay dark for a time. It belongs to the C2 node, its doctrine and its picture, not to the battery. Not in 1.0.
 
 ### 4.6 Degradation and autonomy
 - Losing a C2 or its comms link means subordinate nodes switch to **autonomous mode** after a
@@ -790,8 +808,8 @@ assignment) is not in 1.0: point defence covers what is within the doctrine's `p
 | 3 | Launch detection and HARM defence ladder, point defence, C-RAM. **Done 2026-09-30** (4.5C): `janus_arm.lua`, `tests/test_arm.lua` (237 checks), mutation check green; probe run 8 (red ARMs); bench 05 runs 1-2, 0 Janus errors. Closed by the owner 2026-09-30 with a bench 05 re-validation on DCS 2.9.30 (horizon fix) to follow | HARM defence works on the full bench, repeated runs |
 | 4 | Blue doctrine, naval, AWACS, AAA (fire discipline built 2026-09-30: `janus_aaa.lua`, doctrine `aaa` free / flak trap; ground observers `arm.observers`), battery-preset spawning (flat ground only), both coalitions at once, rest of `JANUS.gci` (commitRequests, weapons control; 4.10). Vietnam moved to Phase 6 (owner, 2026-09-30). **Built 2026-10-01:** `janus_spawn.lua` (4.9), weapons control and `commitRequests` (4.10), ships as shooters, moving AWACS cover, `tests/test_phase4.lua` (152 checks), `tests/test_perf.lua` (300 nodes / 300 aircraft both sides: 8 ms per simulated second), mutation check green; **bench 06 passed 2026-10-01** (`docs/BENCH_RESULTS.md`) | Blue bench plus dual-side performance targets met; GCI runs on the Janus picture and loses control when Janus loses C2/EW. No public beta (owner, 2026-10-01): the first public release is 1.0 after Phase 5 |
 | 5 | Optional modules, non-coder docs (quick start, tutorial, recipes, troubleshooting), demo missions, public 1.0 | A non-coder builds a working IADS from the quick start alone (the project owner, as the test user); **Janus beats Skynet 3.5.0 on the same bench, repeated runs** (the one comparison, recorded for the release) |
-| 6 | **Vietnam** (owner, 2026-09-30): NVA_VIETNAM_1965_72 tuned on a bench - flak traps on (`janus_aaa.lua`, built in Phase 4), ground spotters seeing Shrike launches (`arm.observers`, built), VHF voice reach ~150 km, Fan Song blinks, dummy sites, MiG GCI ambush stations via GCI - and US_VIETNAM_1965_72 (Hawk-defended bases). Small: mostly doctrine values on existing machinery | A Vietnam bench (NVA SA-2/AAA network vs a Shrike-armed Iron Hand/strike package) runs clean and reads like history |
-| 7 | **Iran 1970s - Spellout / Peace Ruby** (owner, 2026-09-30): the US-built Imperial Iranian radar networks (19 sites built 1962-77: Spellout in the north, Peace Ruby in the south, joined by the Peace Net troposcatter link; digitised radar data to two hardened command posts, primary and backup) with the Shah-era SAMs (Improved Hawk, Rapier). Small: two sector networks, an alternate command post (`[alt:]`) and the backup link already exist | An Iran bench (two sectors, primary post lost -> backup post takes over, sectors keep sharing over the backup link) runs clean |
+| 6 | **Vietnam** (owner, 2026-09-30; plus, 2026-10-01: NVA crews turned their radars off whenever an aircraft flew straight at them - Weasels had to - a type-blind rule for the NVA doctrine, decided by the crew or the command post, 4.5D): NVA_VIETNAM_1965_72 tuned on a bench - flak traps on (`janus_aaa.lua`, built in Phase 4), ground spotters seeing Shrike launches (`arm.observers`, built), VHF voice reach ~150 km, Fan Song blinks, dummy sites, MiG GCI ambush stations via GCI - and US_VIETNAM_1965_72 (Hawk-defended bases). Small: mostly doctrine values on existing machinery | A Vietnam bench (NVA SA-2/AAA network vs a Shrike-armed Iron Hand/strike package) runs clean and reads like history |
+| 7 | **Iran 1970s - Spellout / Peace Ruby** (owner, 2026-09-30): the US-built Imperial Iranian radar networks (19 sites built 1962-77: Spellout in the north, Peace Ruby in the south, joined by the Peace Net troposcatter link; digitised radar data to two hardened command posts, primary and backup) with the Shah-era SAMs (Improved Hawk, Rapier). Small: two sector networks, an alternate command post (`[alt:]`) and the backup link already exist. Also builds the **skilled-ambush profile** (owner, 2026-10-01): radars stay dark and come up only once jets are deep in the site's area, the Iraqi pattern of the 1990s Watch years (GlobalSecurity 1999; Hampton, *Viper Pilot*); the Iran profile needs it first and Phase 8 Iraq reuses it. GENERIC_THIRD_WORLD keeps poor emission discipline (Desert Storm 1991) | An Iran bench (two sectors, primary post lost -> backup post takes over, sectors keep sharing over the backup link) runs clean |
 | 8 | **Iraq 1991 - Kari** (owner, 2026-09-30; this is the extra item the owner had raised for Phase 5): the French-built KARI command system (national ADOC, sector operations centres, intercept operations centres, EW radars reporting up the chain), Soviet and western SAMs (SA-2/3/6/8, Roland), very heavy AAA, and how it fell apart (decapitation of the SOCs/IOCs, decoy drones making sites emit, HARMs against autonomous emitters). Bigger: needs a tiered command chain (ADOC > SOC > IOC) and decoy handling | A Kari bench (tiered C2, decoys, decapitation) runs clean and reads like history |
 
 ## 10. Decisions

@@ -12,11 +12,11 @@ BLUE_DOCTRINE = "NATO_COLDWAR",
 ```
 | Doctrine | In one line |
 |---|---|
-| `SOVIET_PVO_1985` (red default) | command post decides, SAMs dark until cued, slow to act alone, two batteries per important target, waits out SEAD aircraft |
-| `RUSSIA_MODERN` | quicker crews, EW radars take turns, sites under Tor/Pantsir cover stay up against HARMs |
+| `SOVIET_PVO_1985` (red default) | command post decides, SAMs dark until the target is deep in their ring (ambush), slow to act alone, two batteries per important target |
+| `RUSSIA_MODERN` | quicker crews, ambush, EW radars take turns, sites under Tor/Pantsir cover stay up against HARMs |
 | `NATO_COLDWAR` | datalinked picture, **weapons tight** (only shoots aircraft it has identified), point defence always on when cut off |
 | `US_MODERN` (blue default) | fastest reactions, datalink picture, point defence always on, **weapons tight** |
-| `NVA_VIETNAM_1965_72` | short radar bursts, slow voice links, SA-2 sites blink on and off, several sites fire at one package |
+| `NVA_VIETNAM_1965_72` | deep ambush, short radar bursts, slow voice links, SA-2 sites blink on and off, several sites fire at one package |
 | `US_VIETNAM_1965_72` | Hawk batteries with radars always on, simple control |
 | `GENERIC_THIRD_WORLD` | poor coordination: radars always on, every site fires at what it sees, slow everything |
 
@@ -65,7 +65,8 @@ only, not bombs or missiles. Janus cannot change that. Use Avengers and fighters
 
 ## Make the SAMs harder or easier
 - **Crew tier in the name**: `GRN` (slow), `REG`, `VET`, `ACE` (quick). It changes reaction times, how long a cut-off
-  site waits before acting alone, and how fast it notices an incoming HARM.
+  site waits before acting alone, how fast it notices an incoming HARM, and how soon it comes back after hiding from one
+  (ACE at once, green crews a minute later).
 - **DCS skill** in the Mission Editor still sets how well the units themselves shoot.
 - **Doctrine**: `GENERIC_THIRD_WORLD` is the easiest to take apart, `RUSSIA_MODERN` and `US_MODERN` the hardest.
 - **Per site**: `[emcon:always]` keeps a radar on all the time (easy to find and hit), `[emcon:dark]` keeps it off

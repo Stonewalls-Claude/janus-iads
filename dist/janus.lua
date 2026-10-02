@@ -4638,6 +4638,9 @@ do
 --   cueDelay         per crew tier: reaction time between a network cue and the radar coming up
 --   cueFactor        a battery is cued when a network track is inside engagement range x cueFactor
 --   cueHold          a cued radar stays up this long after the last track leaves
+--   ambush           a cued radar only comes up once its target is inside ambush x its engagement range: the crew
+--                    gets ready from cueFactor x range, but stays dark until the target is firmly in the ring
+--                    (owner, 2026-10-01: Soviet / Russian 0.8, NATO / US 1.0, Vietnam 0.7)
 --   emcon            policy per node kind while linked to command:
 --                      "always" (emit all the time), "dark" (never emit), "cued" (emit when the network cues it),
 --                      "periodic" (emit on/off on a timer), "rotating" (EW radars take turns)
@@ -4679,18 +4682,18 @@ do
 --                      reaction per tier: crew reaction before acting; cone: a missile heading within this many
 --                      degrees of a radar threatens it; margin: s added to the estimated time to impact;
 --                      predictErr per tier: +- fraction error of that estimate; minDark: shortest dark time (per-type
---                      table in janus_arm.lua overrides); maxDark: longest; afterMax "restart" (come back) or "wait"
---                      (stay dark while a SEAD aircraft stays nose-on); pdEngage: point defence / Tor-class sites
+--                      table in janus_arm.lua overrides); maxDark: longest; caution per tier: extra seconds a crew
+--                      stays down after the threat time (ACE 0: back at once; green crews are careful)
+--                      pdEngage: point defence / Tor-class sites
 --                      stay up and fight; trustPd: a site covered by point defence within pdCoverRange stays up;
 --                      finishShot/finishMargin: a site with its own missile in flight stays up while the ARM is
---                      more than finishMargin s away; accept: every site accepts the hit (or tag a site [hold]);
---                      suspicion per tier: chance per second that an identified SEAD aircraft nose-on within
---                      shooterRange (shooterCone degrees) sends an emitting radar dark for suspectDark s;
+--                      more than finishMargin s away (off in every profile: historically crews shut down and gave
+--                      up the shot - an SA-2/3 loses its missile without the radar; owner 2026-10-01); accept: every site accepts the hit (or tag a site [hold]);
 --                      observers: { range, smokeRange } = ground observers at every site see ARMs by eye in daylight
 --                      (NVA spotters; without it only optical units do); launchCue: a linked radar holding the
 --                      shooter's track may see the launch itself (chance by sensor tier, janus_arm.lua A.LAUNCH;
---                      off in every profile for 1.0: owner, 2026-10-01, to be designed properly first);
---                      suspicion and suppression only count SEAD aircraft outside the site's own reach
+--                      off in every profile for 1.0: owner, 2026-10-01, to be designed properly first).
+--                      No site goes dark because of an aircraft's type (owner, 2026-10-01): only for detected ARMs
 --   aaa              gun fire discipline (janus_aaa.lua): mode "free" (fire at will) or "trap" (flak trap: hold fire
 --                    until a known target is inside trapFactor x the gun's reach, keep firing `hold` s after it left)
 
@@ -4703,7 +4706,8 @@ local BASE = {
   linkRange = 120000, relayRange = 80000, powerRange = 8000, powerReserve = 300,
   autonomyDelay = TIER(180, 120, 60, 30),
   cueDelay = TIER(12, 6, 3, 2),
-  cueFactor = 1.3, cueHold = 30, minOn = 15,
+  cueFactor = 1.3, cueHold = 30, minOn = 15,  -- mutate: ok tuning
+  ambush = 1.0,
   emcon = { EW = "always", BATTERY = "cued", PD = "cued", AAA = "always", NAVAL = "always", C2 = "always" },
   autonomous = { EW = "always", BATTERY = "periodic", PD = "periodic", AAA = "always", NAVAL = "always", C2 = "always" },
   periodic = { on = 20, off = 40 },
@@ -4721,13 +4725,12 @@ local BASE = {
   fighterControl = "ground", awacsTakeover = false,
   altTakeover = TIER(240, 150, 90, 60),
   idTime = TIER(150, 90, 60, 40),
-  wta = { enabled = true, pkGoal = 0.7, maxShooters = 1, pdDiscount = 0.5, handoffMargin = 0.15, minPk = 0.15, lead = 40,
+  wta = { enabled = true, pkGoal = 0.7, maxShooters = 1, pdDiscount = 0.5, handoffMargin = 0.15, minPk = 0.15, lead = 40,  -- mutate: ok tuning
           weapons = "free" },
   arm = { enabled = true, confirmScans = 3, confirmWindow = 10, netDelay = TIER(8, 5, 3, 2), reaction = TIER(6, 3, 2, 1),  -- mutate: ok tuning
           cone = 15, margin = 10, predictErr = TIER(0.3, 0.15, 0.1, 0.05), minDark = 20, maxDark = 180,  -- mutate: ok tuning
-          afterMax = "restart", pdEngage = true, trustPd = false, pdCoverRange = 15000, finishShot = true,  -- mutate: ok tuning
-          finishMargin = 15, accept = false, suspicion = TIER(0.02, 0.01, 0.005, 0), suspectDark = 30,  -- mutate: ok tuning
-          shooterRange = 60000, shooterCone = 20, launchCue = false },  -- mutate: ok tuning
+          pdEngage = true, trustPd = false, pdCoverRange = 15000, finishShot = false,  -- mutate: ok tuning
+          finishMargin = 15, accept = false, caution = TIER(60, 30, 10, 0), launchCue = false },  -- mutate: ok tuning
   aaa = { mode = "free", trapFactor = 0.7, hold = 20 },  -- mutate: ok tuning
 }
 
@@ -4756,7 +4759,7 @@ M.deriveDoctrine = derive
 M.Doctrines = {
   -- Centralised control, strict EMCON: EW always up, SAMs dark until the command post cues them, slow to act alone.
   SOVIET_PVO_1985 = derive(BASE, {
-    name = "SOVIET_PVO_1985",
+    name = "SOVIET_PVO_1985", ambush = 0.8,
     autonomyDelay = TIER(300, 180, 120, 60),
     autonomous = { BATTERY = "periodic", PD = "periodic" },
     periodic = { on = 15, off = 60 },
@@ -4766,12 +4769,11 @@ M.Doctrines = {
     altTakeover = TIER(300, 180, 120, 90),
     -- salvo doctrine: two battalions on a high-value target until the combined kill probability is high
     wta = { pkGoal = 0.85, maxShooters = 2 },
-    -- dark on warning and wait out the SEAD aircraft; a command post orders it, so reactions are not quick
-    arm = { afterMax = "wait", maxDark = 300, suspicion = TIER(0.04, 0.02, 0.01, 0.005) },  -- mutate: ok tuning
+        arm = { maxDark = 300 },  -- mutate: ok tuning
   }),
   -- Faster autonomy, EW radars rotate to spread their exposure, point defence stays close to always-on.
   RUSSIA_MODERN = derive(BASE, {
-    name = "RUSSIA_MODERN",
+    name = "RUSSIA_MODERN", ambush = 0.8,
     autonomyDelay = TIER(120, 60, 30, 20),
     cueDelay = TIER(8, 4, 2, 1),
     emcon = { EW = "rotating", PD = "cued" },
@@ -4810,11 +4812,11 @@ M.Doctrines = {
     altTakeover = TIER(60, 30, 20, 15),
     idTime = TIER(60, 40, 25, 20),     -- IFF, NCTR, fused picture
     wta = { weapons = "tight" },       -- positive ID before a SAM fires (JEZ/MEZ: fighters share the airspace)
-    arm = { reaction = TIER(4, 2, 1, 1), netDelay = TIER(3, 2, 1, 1), suspicion = TIER(0, 0, 0, 0) },  -- mutate: ok tuning
+    arm = { reaction = TIER(4, 2, 1, 1), netDelay = TIER(3, 2, 1, 1) },  -- mutate: ok tuning
   }),
   -- North Vietnam 1965-72: Fan Song emits for seconds only, sites cued by early warning, AAA always ready.
   NVA_VIETNAM_1965_72 = derive(BASE, {
-    name = "NVA_VIETNAM_1965_72",
+    name = "NVA_VIETNAM_1965_72", ambush = 0.7,
     cueFactor = 1.0, cueHold = 15, minOn = 8,
     autonomyDelay = TIER(240, 150, 90, 60),
     periodic = { on = 10, off = 60 },
@@ -4825,8 +4827,7 @@ M.Doctrines = {
     wta = { pkGoal = 0.8, maxShooters = 2 },   -- several SA-2 sites fire at one strike package
     -- short "blinks": dark just long enough, back up quickly; observers phone warnings in slowly
     -- (Phase 6 Vietnam tuning to come: flak traps, ground spotters, VHF voice reach)
-    arm = { maxDark = 60, margin = 5, minDark = 10, netDelay = TIER(20, 15, 10, 8),  -- mutate: ok tuning
-            suspicion = TIER(0.08, 0.05, 0.03, 0.02), suspectDark = 20 },  -- mutate: ok tuning
+    arm = { maxDark = 60, margin = 5, minDark = 10, netDelay = TIER(20, 15, 10, 8) },  -- mutate: ok tuning
   }),
   -- US Vietnam era: Hawk batteries defending airbases, simple procedural control.
   US_VIETNAM_1965_72 = derive(BASE, {
@@ -4847,8 +4848,7 @@ M.Doctrines = {
     agBackup = { mode = "none" },
     idTime = TIER(240, 180, 120, 90),
     wta = { enabled = false },             -- no central fire control: every site engages what it sees
-    arm = { confirmScans = 5, reaction = TIER(15, 10, 6, 4), netDelay = TIER(30, 20, 15, 10),  -- mutate: ok tuning
-            suspicion = TIER(0.05, 0.03, 0.02, 0.01) },  -- mutate: ok tuning
+    arm = { confirmScans = 5, reaction = TIER(15, 10, 6, 4), netDelay = TIER(30, 20, 15, 10) },  -- mutate: ok tuning
   }),
 }
 
@@ -6080,6 +6080,9 @@ function E.want(n, policy, now)
       em.cuedAt = em.cuedAt or now
       em.lastCue = now
       local delay = (d.cueDelay[n.tier] or d.cueDelay.REG) + (n.feedDelay or 0) + (n.linkDelay or 0)  -- mutate: ok coverage always sets feedDelay; tiers always present
+      -- ambush: the crew is ready from the cue on, but the radar waits until the target is firmly in the ring
+      local ring = (M.wta and (n.kind == "BATTERY" or n.kind == "PD") and M.wta.envelope(n).R or n.engageRange) * d.ambush  -- mutate: ok every built network has the wta module
+      if not em.on and dist > ring then return false, string_format("ambush: %s at %.0f km", M.tracks.label(tr), dist / 1000) end  -- mutate: ok km in the log text
       if byWta then
         if now - em.cuedAt >= delay then return true, string_format("assigned %s, %.0f km", M.tracks.label(tr), dist / 1000) end  -- mutate: ok km in the log text
         return em.on == true, "cue pending"
@@ -6234,16 +6237,18 @@ do
 --            old EW radars) rarely; busy crews notice less
 --   eyes     optical trackers within ~10 km in daylight (15 km for smoky motors)
 --   network  a confirmed ARM is passed to every linked node after the doctrine's netDelay
---   suspicion  an identified SEAD aircraft nose-on inside 60 km can make a crew go dark before any launch
+-- A site never goes dark because of the type of an aircraft: a crew cannot tell a strike from a SEAD or DEAD flight
+-- (owner, 2026-10-01). It hides only from an ARM that it, or the network (EW, AWACS, other sites), has detected.
+-- The command post's educated guess about a SEAD raid is a later design (DESIGN 4.5D).
 -- A radar sighting is confirmed by `confirmScans` sightings inside `confirmWindow` seconds, two sensors, or eyes.
 -- Response ladder per threatened radar (the missile's estimated path points at it), after the crew's reaction time:
 --   engage   tier A sites and point defence stay up and fight (DCS's Tor / Pantsir do shoot ARMs, probe run 2)
 --   accept   a site tagged [hold] (or doctrine accept) stays up
 --   covered  doctrine trustPd and a point-defence site within pdCoverRange: stay up, point defence forced on
 --   finish   own missiles in flight and more than finishMargin to impact: stay up to finish the shot
---   dark     radar off for estimated time to impact (error by crew tier) + margin, at least the system's minimum;
---            longer while an identified SEAD aircraft stays nose-on in range (suppression), up to maxDark
---            ("restart" doctrines come back then, "wait" doctrines stay down while the shooter stays)
+--   dark     radar off for estimated time to impact (error by crew tier) + margin + the crew's caution (ACE back at
+--            once, green crews later), at least the system's minimum, at most maxDark; while known ARMs keep coming
+--            the site stays down (suppression) - the window a DEAD flight uses
 -- EMCON applies the decision; its restart times (4.5B) still apply when the radar comes back. A dark site is not
 -- offered targets by WTA. Point defence near a threatened site is forced up. Scoring: emitting time lost to ARMs
 -- (suppression), ARM hits, missiles the network saw die short of a radar.
@@ -6262,10 +6267,12 @@ A.INTERVAL = 1
 A.rand = math.random
 A.SUMMARY_EVERY = 300     -- mutate: ok log cadence
 A.LOST = 20               -- mutate: ok a threat nobody has seen for this long is kept only LOST + 300 s
-A.CALM = 60               -- mutate: ok tuning; after a maximum-dark restart, suspicion alone cannot send it dark again
 A.RECENT = 120           -- mutate: ok tuning; a radar dark for less than this still counts as the emitter a missile was fired at
 A.SEE_MAX = 50000        -- no radar holds an ARM farther than this (probe run 3: DCS EW radars "see" HARMs at 100+ km)
 A.BEYOND = 10000          -- radars more than this beyond the nearest emitter on a missile's path are not threatened
+A.HORIZON = 120          -- no site reacts to an ARM farther out than this (s to impact); judged again as it closes. Bench 07
+                         -- run 13: a spent HARM that lost its dark SA-11 pointed at an SA-6 36 km on and shut it for 148 s
+                         -- at ~229 s to impact; real threats in every bench run came in under 110 s
 A.GONE_SEEN = 3           -- mutate: ok tuning; the network learns a missile died if a sensor held it this close to its end
 
 -- Anti-radiation weapons by DCS type name (average speed m/s, maximum range m, smoky motor). Gameplay defaults from
@@ -6286,12 +6293,6 @@ A.ARMS = {
   ["LD-10"] = { speed = 400, range = 60000 },               -- mutate: ok data
 }
 A.DEFAULT_ARM = { speed = 700, range = 80000 }              -- mutate: ok data
-
--- Aircraft that fly SEAD (suspicion cue): only once the network has identified the type.
-A.SEAD_TYPES = {
-  ["F-16C_50"] = true, ["FA-18C_hornet"] = true, ["F-4E"] = true, ["F-4E-45MC"] = true, ["Tornado IDS"] = true,  -- mutate: ok data
-  ["Tornado GR4"] = true, ["Su-24M"] = true, ["Su-34"] = true, ["Su-25T"] = true, ["JF-17"] = true,           -- mutate: ok data
-}
 
 -- Sensor tiers (DESIGN 4.5A). Anything with a radar that is not listed: B for batteries / point defence, C for EW.
 A.TIER_A = { ["Tor 9A331"] = true, ["CHAP_PantsirS1"] = true, ["CHAP_TorM2"] = true, ["HQ-17A"] = true }  -- mutate: ok data
@@ -6611,13 +6612,15 @@ local function aimedAt(n, th, now)
   local speed = math_sqrt(v.x * v.x + v.z * v.z)
   if speed < 1 then return nil end   -- mutate: ok degenerate guard
   if dist > 2000 and offAngle(p, v, n.pos) > d.cone then return nil end
+  local tti = dist / math_max(speed, th.f.data.speed * 0.5)   -- mutate: ok floor for a slowing missile (tuning)
+  if tti > A.HORIZON then return nil end   -- too far out to judge (and the front is not fixed from so far away)
   -- beyond the nearest emitter on the path (+ A.BEYOND): not this missile's target
   local front = n.linked and frontNode(n, th, p, v, now)
   if front and front ~= n then
     -- past its target (the front radar is behind it): the missile is ending there, nobody further on is threatened
     if offAngle(p, v, front.pos) > 90 or dist > horiz(p, front.pos) + A.BEYOND then return nil end
   end
-  return dist / math_max(speed, th.f.data.speed * 0.5)   -- mutate: ok floor for a slowing missile (tuning)
+  return tti
 end
 
 -- ------------------------------------------------------------------ response ladder
@@ -6641,35 +6644,6 @@ local function minDark(n)
   return n.net.doctrine.arm.minDark
 end
 
--- an identified SEAD aircraft nose-on to n inside shooterRange (what the crew can see on its picture)
-local function isSead(tr)
-  local v = tr.vel
-  return tr.typeKnown and A.SEAD_TYPES[tr.typeName] and v ~= nil and v.x * v.x + v.z * v.z > 2500   -- moving > 50 m/s  -- mutate: ok threshold tuning
-end
--- a SEAD aircraft inside the site's own reach is attacking it: the crew fights instead of hiding (bench 07: an SA-11
--- went dark for a strafing F-16 at 1 km, which then shot it up). Suspicion and suppression only count stand-off shooters.
-local function ownReach(n)
-  if n.kind == "BATTERY" or n.kind == "PD" or n.kind == "NAVAL" then return M.wta.envelope(n).R end  -- mutate: ok an EW / C2 envelope has R 0 too
-  return 0   -- mutate: ok any reach under the nearest SEAD standoff range behaves the same
-end
-local function seadNoseOn(n)
-  local d = n.net.doctrine.arm
-  local reach = ownReach(n)
-  local best
-  local function scan(pic)
-    for _, tr in pairs(pic or {}) do
-      if isSead(tr) then
-        local dist = horiz(tr.pos, n.pos)
-        if dist <= d.shooterRange and dist > reach and offAngle(tr.pos, tr.vel, n.pos) <= d.shooterCone then
-          if not best or dist < best.dist then best = { tr = tr, dist = dist } end   -- mutate: ok nearest only names the log
-        end
-      end
-    end
-  end
-  if n.linked then scan(n.net.seads) else scan(n.localTracks) end
-  return best
-end
-
 local function say(n, key, msg)
   local s = state(n)
   if s.logged[key] then return end
@@ -6690,7 +6664,7 @@ local function goDark(n, now, untilT, why, th)
     if untilT > dk.untilT then dk.untilT = untilT end
     if th then dk.th, dk.why = th, why end
   end
-  if d.afterMax ~= "wait" and dk.untilT > dk.since + d.maxDark then dk.untilT = dk.since + d.maxDark end
+  if dk.untilT > dk.since + d.maxDark then dk.untilT = dk.since + d.maxDark end
 end
 
 local function release(n, why)
@@ -6747,47 +6721,16 @@ local function respond(n, now)
   local dk = s.dark
   if dk and dk.th == worst then return end   -- already dark for this missile
   local err = (d.predictErr[n.tier] or d.predictErr.REG) * (2 * A.rand() - 1)   -- mutate: ok every tier present
-  local darkFor = math_max(worstT * (1 + err) + d.margin, minDark(n))
+  local darkFor = math_max(worstT * (1 + err) + d.margin + (d.caution[n.tier] or d.caution.REG), minDark(n))  -- mutate: ok every tier present
   goDark(n, now, now + darkFor, string_format("ARM %s inbound, ~%.0f s to impact", worst.id, worstT), worst)
 end
 
--- suspicion cue: an identified SEAD aircraft nose-on can send an emitting radar dark before any launch
-local function suspect(n, now)
-  local d = n.net.doctrine.arm
-  local s = state(n)
-  if s.dark or not n.emcon.on or A.sensorTier(n) == "A" or n.kind == "PD" then return end   -- mutate: ok a dark node is off within a tick
-  if s.calmUntil and now < s.calmUntil then return end
-  if M.emcon.missilesInFlight(n, now) or n.site.tags.hold then return end
-  local p = d.suspicion[n.tier] or 0   -- mutate: ok every tier present
-  if p <= 0 then return end
-  if n.linked and #(n.net.seads or {}) == 0 then return end   -- no identified SEAD aircraft on the picture
-  if A.rand() >= p then return end          -- roll before the picture scan (the expensive part)
-  local sn = seadNoseOn(n)
-  if sn then
-    goDark(n, now, now + d.suspectDark, string_format("suspects SEAD %s nose-on at %.0f km", M.tracks.label(sn.tr),
-      sn.dist / 1000))   -- mutate: ok log text
-  end
-end
-
--- a dark site stays dark while a SEAD aircraft stays nose-on (suppression), within its doctrine's limits
+-- a dark site comes back when its time is up (EMCON then applies the system's restart time); maxDark caps it
 local function hold(n, now)
-  local s = state(n)
-  local dk = s.dark
-  if not dk then return end
-  local d = n.net.doctrine.arm
-  if now >= dk.untilT - 1 then   -- mutate: ok one tick of slack
-    local sn = seadNoseOn(n)
-    local capped = d.afterMax ~= "wait" and now >= dk.since + d.maxDark
-    if sn and not capped then
-      dk.untilT = now + 5   -- mutate: ok extension step (tuning)
-      say(n, "suppressed", string_format("stays dark: %s nose-on at %.0f km", M.tracks.label(sn.tr), sn.dist / 1000))  -- mutate: ok log
-    elseif capped and now >= dk.untilT then   -- mutate: ok hold only runs from untilT - 1, so both orders release at the cap
-      release(n, "maximum dark time reached")
-      state(n).calmUntil = now + A.CALM   -- back up for real: no new suspicion for a while (real ARMs still count)
-      return
-    end
+  local dk = state(n).dark
+  if dk and now >= dk.untilT then
+    release(n, now >= dk.since + n.net.doctrine.arm.maxDark and "maximum dark time reached" or "threat time passed")
   end
-  if now >= dk.untilT then release(n, "threat time passed") end
 end
 
 -- another known threat (not `except`, not ended) aimed at n, or nil
@@ -6876,11 +6819,10 @@ function A.isDark(n)
 end
 
 -- ------------------------------------------------------------------ tick
--- one node's ARM tick: decide, suspect, hold / release, bookkeeping
+-- one node's ARM tick: decide, release, bookkeeping
 function A.nodeTick(n, now)
   if n.hasRadar and n.pos and up(n) then
     respond(n, now)
-    suspect(n, now)
     hold(n, now)
     local s = n.arm
     if s and s.dark then s.darkSec = s.darkSec + A.INTERVAL end
@@ -6916,13 +6858,10 @@ function A.tick()
       for _, f in ipairs(A.flights) do
         if f.coa ~= net.coalition and f.pos and f.vel then sense(net, f, now) end
       end
-      local seads = {}
-      for _, tr in pairs(net.tracks or {}) do if isSead(tr) then seads[#seads + 1] = tr end end
-      net.seads = seads
-      -- quiet network (no ARM known, no SEAD aircraft identified): only nodes still in an ARM state need a look
-      local quiet = next(net.arms or {}) == nil and #seads == 0
+      -- quiet network (no ARM known): only nodes still in an ARM state need a look
+      local quiet = next(net.arms or {}) == nil
       for _, n in ipairs(net.nodes) do
-        local skip = quiet and not busy(n) and not (n.localTracks and next(n.localTracks) and not n.linked)   -- mutate: ok performance skip
+        local skip = quiet and not busy(n)   -- mutate: ok performance skip
         if not skip then A.nodeTick(n, now) end
       end
       expire(net, now)
