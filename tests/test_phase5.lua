@@ -198,6 +198,41 @@ do
   check(count("[stats]") == 0, "STATS_EVERY 0: nothing until the end")
   F.fire({ id = world.event.S_EVENT_MISSION_END })
   check(count("red total (mission end)") == 1, "then the end report")
+  -- the default interval: every 600 s
+  F.reset()
+  F.addGroup{ name = "CMD Post", units = { { type = "SKP-11", x = 0, z = 0 } } }
+  load{ STATS = true }
+  F.run(590)
+  check(count("total (") == 0, "default STATS_EVERY: no report before 600 s")
+  F.run(620)
+  check(count("red total (") == 1, "default STATS_EVERY: the first report at 600 s")
+end
+
+-- ---------------------------------------------------------------- 4a. base warning: the default 30 s cooldown
+do
+  F.reset()
+  F.airbases = { { name = "Incirlik", x = 1000, z = 1000 } }
+  F.addGroup{ name = "CMD CRC", coalition = BLUE, units = { { type = "MLRS FDDM", x = 0, z = -3000 } } }
+  F.addGroup{ name = "PD C-RAM Incirlik", coalition = BLUE, units = { { type = "HEMTT_C-RAM_Phalanx", x = 0, z = 0 } } }
+  local su = F.addGroup{ name = "Fencer", coalition = RED, category = AIR, units = { { type = "Su-24M", x = 40000, z = 0, alt = 3000 } } }.units[1]
+  load{ BASE_WARNING = true }
+  F.run(2)
+  local function bomb(t)
+    F.launch{ shooter = su, type = "FAB-250", category = Weapon.Category.BOMB, guidance = Weapon.GuidanceType.INS,
+      x = 8000, z = 0, vx = -500, vz = 0, dieAt = t + 15 }
+  end
+  bomb(2)
+  F.run(5)
+  check(#F.coaText == 1, "first bomb: warned")
+  F.run(22)
+  bomb(22)
+  F.run(26)
+  check(#F.coaText == 1, "a second bomb 20 s later: inside the 30 s cooldown")
+  F.run(40)
+  bomb(40)
+  F.run(44)
+  check(#F.coaText == 2, "a third bomb 38 s later: warned again")
+  check(not F.logContains("ERROR JANUS"), "block 4a: no Janus errors")
 end
 
 -- ---------------------------------------------------------------- 4. base warning

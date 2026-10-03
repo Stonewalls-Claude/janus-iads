@@ -5,7 +5,7 @@
 JANUS = JANUS or {}
 local M = JANUS
 
-M.VERSION = "0.1.0-phase0"
+M.VERSION = "1.0.0"
 M.TAG = "JANUS"
 
 -- Cache hot DCS functions as locals (nil-safe so the file loads in the offline harness too).

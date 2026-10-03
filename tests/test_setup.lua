@@ -32,7 +32,7 @@ do
   F.addGroup{ name = "PD Pantsir Hama", units = { { type = "CHAP_PantsirS1" } } }
 
   local J = load()
-  check(J.VERSION ~= nil, "version set")
+  check(J.VERSION == "1.0.0", "version 1.0.0")
   check(J.UnitDB and J.UnitDB["Kub 1S91 str"] and J.UnitDB["Kub 1S91 str"].role == "STR", "unit DB embedded")
   check(J.Presets and J.Presets["SA-6"], "presets embedded")
   check(not J.started, "not started before the autostart delay")

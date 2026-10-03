@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased - Phase 5: 1.0 release candidate (2026-10-01)
+## 1.0.0 - first public release (2026-10-02)
+Everything below this heading down to 0.1.0-phase0 is in 1.0.0: there was no public release before it.
+- `JANUS.VERSION` "1.0.0".
+- Release gate (owner: Janus judged as a whole system, not one score): bench 07 final build avg 25.0 vs Skynet 3.5.0
+  avg 25.3 on Skynet's own scoring, 0 Janus errors in every bench and demo run (`docs/BENCH_RESULTS.md`).
 - Scripter API (`src/janus_api.lua`, `docs/API.md`): `JANUS.subscribe(event, fn [, key])` / `unsubscribe` for
   `engage`, `harmDetected`, `emission`, `nodeLost`, `nodeRestored`, `nodeDegraded`; `setEmcon`, `setWeapons`,
   `setHold`, `addGroup`; `site`, `siteNames`, `stats`.
