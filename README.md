@@ -66,6 +66,7 @@ Measured on test missions (`docs/PROBE_RESULTS.md`, `docs/BENCH_RESULTS.md`):
 python3 tools/build_unitdb.py --datamine <dcs-lua-datamine> --olympus <DCSOlympus>   # after a DCS patch
 python3 tools/check_presets.py        # validates presets, writes docs/BATTERY_PRESETS.md
 python3 tests/run_all.py              # builds dist/janus.lua and runs the offline tests (needs Lua 5.1)
+python3 tests/mutate.py --gate [REF]   # mutation gate: every break on src lines changed since REF must be caught
 dcs-check --ns JANUS --tests tests src tests/probe dist   # lint gate: Lua 5.1, sanitized env, zero errors
 ```
 Unit data comes from [Quaggles/dcs-lua-datamine](https://github.com/Quaggles/dcs-lua-datamine) and the
