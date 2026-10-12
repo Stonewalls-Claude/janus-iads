@@ -1,9 +1,17 @@
 -- Janus IADS - track picture (DESIGN 4.2): aircraft seen by the network's emitting radars, fused per network and kept
 -- per radar. Budgeted round-robin polling of Controller:getDetectedTargets(). A track has a number, class
--- (fixed-wing / helicopter), position, velocity, the sensors holding it and, once identified, the DCS type name:
--- identified when a sensor reports the detection `type` flag (probe run 6: AWACS, SA-6, SA-11 do; ground EW never)
--- or, on the network picture, after the doctrine's idTime of continuous track. Weapons are ignored here (the ARM
--- awareness model of DESIGN 4.5A handles them in Phase 3, because DCS's own weapon detection is far too generous).
+-- (fixed-wing / helicopter), position, velocity and the sensors holding it. Weapons are ignored here (the ARM
+-- awareness model of DESIGN 4.5A handles them, because DCS's own weapon detection is far too generous).
+--
+-- Two kinds of identification (DESIGN 4.2, AI_BRAIN 4.2 d, owner 2026-10-12):
+--   type      typeKnown / typeName, only from a node that could really classify the aircraft:
+--               NCTR     a radar of a type in settings NCTR_RADARS holding it (no Soviet / Russian radar has NCTR;
+--                        the DCS detection `type` flag alone no longer counts: SA-6 and SA-11 set it)
+--               optical  the track within VISUAL_ID_RANGE (5 NM) of a node with an optical sensor, in line of sight
+--               passive  ELINT naming the emitter (COMMANDER 5.1's PASSIVE sensor, later): the hook T.passiveId
+--             otherwise the class only; GCI estimates the type from its intel.
+--   hostile   tr.declared: the network has declared the track hostile (IFF / procedure: the doctrine's idTime of
+--             continuous track on the linked picture, or a known type). Weapons tight engages declared tracks.
 
 JANUS = JANUS or {}
 local M = JANUS
@@ -29,6 +37,8 @@ local function isSensor(n)
 end
 T.isSensor = isSensor
 
+T.passiveId = nil   -- hook: function(node, tr) -> true if this PASSIVE (ELINT) node names tr's type
+
 local function identify(tr, obj, by, now)
   local ok, t = pcall(obj.getTypeName, obj)
   if ok and t then   -- mutate: ok getTypeName never returns nil
@@ -36,8 +46,33 @@ local function identify(tr, obj, by, now)
   end
 end
 
--- det: the detection entry (its `type` flag); dwell: seconds of continuous track that identify it anyway (nil = never)
-local function store(picture, obj, pos, now, node, det, class, dwell)
+local function lineOfSight(a, b)
+  if not (land and land.isVisible) then return true end   -- mutate: ok offline harness without terrain
+  return land.isVisible({ x = a.x, y = a.y + 5, z = a.z }, b)   -- mutate: ok eye height (the harness has no terrain)
+end
+
+-- within the visual identification range of node n's optical sensor, in line of sight
+local function opticalRange(n, pos)
+  if not (n.optic and n.pos) then return false end   -- mutate: ok[return] false or nil: both "no"
+  local dx, dz, r = pos.x - n.pos.x, pos.z - n.pos.z, M.settings.VISUAL_ID_RANGE
+  return dx * dx + dz * dz <= r * r and lineOfSight(n.pos, pos)
+end
+T.opticalRange = opticalRange
+
+-- how node n can name the type of track tr at pos (nil = it cannot): DESIGN 4.2
+local function classifiedBy(n, tr, pos)
+  if n.nctr then return n.name .. " (NCTR)" end
+  if opticalRange(n, pos) then return n.name .. " (optical)" end
+  if n.passive and T.passiveId and T.passiveId(n, tr) then return n.name .. " (ELINT)" end
+  return nil
+end
+
+local function declare(tr, by, now)
+  tr.declared, tr.declBy, tr.declAt = true, by, now
+end
+
+-- dwell: seconds of continuous track on the linked picture that declare it hostile (nil = never: a radar's own picture)
+local function store(picture, obj, pos, now, node, class, dwell)
   local id = obj.getID and obj:getID() or tostring(obj)
   local tr = picture[id]
   if not tr then
@@ -47,7 +82,7 @@ local function store(picture, obj, pos, now, node, det, class, dwell)
       num = T.seq
       T.numbers[id] = num
     end
-    tr = { id = id, num = num, obj = obj, first = now, sensors = {}, class = class, typeKnown = false }
+    tr = { id = id, num = num, obj = obj, first = now, sensors = {}, class = class, typeKnown = false, declared = false }
     picture[id] = tr
   elseif tr.pos and now > tr.t then
     local dt = now - tr.t
@@ -56,10 +91,14 @@ local function store(picture, obj, pos, now, node, det, class, dwell)
   tr.pos, tr.t = pos, now
   tr.sensors[node.name] = now
   if not tr.typeKnown then
-    if det and det.type then
-      identify(tr, obj, node.name, now)
+    local by = classifiedBy(node, tr, pos)
+    if by then identify(tr, obj, by, now) end
+  end
+  if not tr.declared then
+    if tr.typeKnown then
+      declare(tr, tr.idBy, now)
     elseif dwell and now - tr.first >= dwell then
-      identify(tr, obj, "held " .. math.floor(now - tr.first) .. " s", now)
+      declare(tr, "held " .. math.floor(now - tr.first) .. " s", now)
     end
   end
   return tr
@@ -87,11 +126,11 @@ function T.poll(node, now)
       if ocoa ~= coa and ocoa ~= 0 and desc and AIR[desc.category] then
         local pos = obj:getPoint()
         local class = T.CLASS[desc.category]
-        store(node.localTracks, obj, pos, now, node, det, class, nil)
+        store(node.localTracks, obj, pos, now, node, class, nil)
         if node.linked then
           node.net.tracks = node.net.tracks or {}
           local it = node.net.doctrine.idTime
-          store(node.net.tracks, obj, pos, now, node, det, class, it and (it[node.tier] or it.REG))
+          store(node.net.tracks, obj, pos, now, node, class, it and (it[node.tier] or it.REG))
         end
         n = n + 1
       end
@@ -99,6 +138,27 @@ function T.poll(node, now)
   end
   T.stats.polls = T.stats.polls + 1
   return n
+end
+
+-- Optical identification of the linked picture: a node with an optical sensor names the type of any track inside
+-- VISUAL_ID_RANGE, whether or not its own radar holds it (Avenger, Strela, a dark Tor).
+function T.opticalPass(net, now)
+  local eyes = {}
+  for _, n in ipairs(net.nodes) do
+    if n.optic and n.alive and n.linked then eyes[#eyes + 1] = n end
+  end
+  if #eyes == 0 then return end
+  for _, tr in pairs(net.tracks) do
+    if not tr.typeKnown and tr.pos then
+      for i = 1, #eyes do
+        if opticalRange(eyes[i], tr.pos) then
+          identify(tr, tr.obj, eyes[i].name .. " (optical)", now)
+          if not tr.declared then declare(tr, tr.idBy, now) end
+          break
+        end
+      end
+    end
+  end
 end
 
 local function expire(picture, now)
@@ -123,8 +183,13 @@ function T.tick()
       polled = polled + 1
     end
   end
+  local optical = now - (T.lastOptical or -1e9) >= T.POLL_INTERVAL
+  if optical then T.lastOptical = now end
   for _, net in pairs(M.net.networks) do
-    if net.tracks then expire(net.tracks, now) end
+    if net.tracks then
+      expire(net.tracks, now)
+      if optical then T.opticalPass(net, now) end
+    end
   end
   for _, n in ipairs(list) do
     if n.localTracks then expire(n.localTracks, now) end

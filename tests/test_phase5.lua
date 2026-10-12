@@ -49,7 +49,7 @@ do
   for _, e in ipairs(got) do byEv[e.event] = byEv[e.event] or {}; table.insert(byEv[e.event], e) end
   local en = byEv.engage and byEv.engage[1]
   check(en and en.site == "SAM SA-6 A" and en.coalition == RED and en.net == "red/main" and en.unitId == jet:getID()
-    and en.typeName == "F-16C_50" and en.pk > 0 and en.from == nil and en.t > 0, "engage event: site, track, Pk")
+    and en.typeName == nil and en.pk > 0 and en.from == nil and en.t > 0, "engage event: site, track, Pk (type unknown: no NCTR on the SA-6)")
   check(#byEv.engage == 1, "one engage event (the bad subscriber called separately)")
   check(F.logContains("api.subscriber.engage"), "a subscriber's error is caught and logged")
   for i = #F.log, 1, -1 do if F.log[i]:find("api.subscriber.engage", 1, true) then table.remove(F.log, i) end end

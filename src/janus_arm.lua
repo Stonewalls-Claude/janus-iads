@@ -132,11 +132,7 @@ function A.sensorTier(n)
 end
 
 local function hasOptics(n)
-  if n.armOptic == nil then
-    n.armOptic = false
-    for _, u in ipairs(n.site.units) do if u.rec.optic then n.armOptic = true end end
-  end
-  return n.armOptic
+  return n.optic == true
 end
 
 local function daylight()

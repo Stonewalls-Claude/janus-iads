@@ -466,7 +466,8 @@ do
   check(J.Doctrines.GENERIC_THIRD_WORLD.c2LossCue.mode == "none", "GENERIC_THIRD_WORLD has no feed")
 end
 
--- ---------------------------------------------------------------- 11. tick cost with 150 nodes and 30 aircraft
+-- ---------------------------------------------------------------- 11. 150 nodes and 30 aircraft (its cost: tests/test_perf.lua,
+-- against a budget scaled to the machine; a clock check here failed whenever mutation runs shared the CPU)
 do
   F.reset()
   for i = 1, 5 do F.addGroup{ name = "CMD C" .. i, units = { { type = "SKP-11", x = i * 100000, z = 0 } } } end
@@ -479,13 +480,7 @@ do
   for i = 1, 30 do planes[i] = bandit("Blue " .. i, i * 15000, 60000) end
   for i = 1, 15 do F.sees["EW E" .. i] = planes end
   load()
-  F.run(10)
-  local t0 = os.clock()
   F.run(310)
-  local cpu = os.clock() - t0
-  local perTick = cpu / 300 * 1000
-  print(string.format("  perf: 150 nodes, 30 aircraft, 300 s simulated: %.3f s CPU, %.2f ms per simulated second", cpu, perTick))
-  check(perTick < 5, "under 5 ms per simulated second (" .. string.format("%.2f", perTick) .. " ms)")
   local up = 0
   for i = 1, 130 do if F.emitting("SAM S" .. i) then up = up + 1 end end
   check(up > 0 and up < 130, "some but not all batteries cued (" .. up .. ")")

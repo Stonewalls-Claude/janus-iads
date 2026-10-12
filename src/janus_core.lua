@@ -5,7 +5,7 @@
 JANUS = JANUS or {}
 local M = JANUS
 
-M.VERSION = "1.0.0"
+M.VERSION = "1.1.0"
 M.TAG = "JANUS"
 
 -- Cache hot DCS functions as locals (nil-safe so the file loads in the offline harness too).
@@ -34,6 +34,14 @@ M.defaults = {
   BASE_WARNING_RANGE = 12000,   -- metres from the protected site
   BASE_WARNING_SOUND = "",   -- optional sound file packed in the mission (e.g. "siren.ogg"); "" = text only
   BASE_WARNING_COOLDOWN = 30,   -- seconds before the same site warns again
+  -- Type identification (DESIGN 4.2): which radars can tell an F-14 from an F-15 on their own (non-cooperative target
+  -- recognition). Every other radar gives the class only ("fixed-wing" / "helicopter"); optical sensors name the
+  -- type inside VISUAL_ID_RANGE. No Soviet or Russian EW or SAM radar has NCTR. Add a DCS radar type with
+  -- NCTR_RADARS = { ["<type>"] = true }; remove a default with ["Patriot str"] = false.
+  NCTR_RADARS = {
+    ["Patriot str"] = true,   -- AN/MPQ-53 target classification
+  },
+  VISUAL_ID_RANGE = 9260,    -- metres (5 NM): an optical sensor names the type of an aircraft this close
   -- Role words at the start of a group name (case-insensitive). Change these if your naming differs.
   ROLE_WORDS = {
     SAM = "SAM", EW = "EW", CMD = "CMD", PD = "PD", AAA = "AAA",

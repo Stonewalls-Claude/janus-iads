@@ -17,7 +17,7 @@ JANUS_SETTINGS = {
   -- Doctrine for each side. Shipped profiles:
   --   "SOVIET_PVO_1985"     command post decides, SAMs dark until cued, slow to act alone
   --   "RUSSIA_MODERN"       quicker crews, EW radars take turns, sites under Tor/Pantsir cover stay up against HARMs
-  --   "NATO_COLDWAR"        datalinked picture, weapons tight (only fires at identified aircraft)
+  --   "NATO_COLDWAR"        datalinked picture, weapons tight (only fires at aircraft declared hostile)
   --   "US_MODERN"           fastest reactions, datalink picture, weapons tight
   --   "NVA_VIETNAM_1965_72" short radar bursts, slow voice links, several SA-2 sites on one strike package
   --   "US_VIETNAM_1965_72"  Hawk batteries with radars always on
@@ -27,6 +27,11 @@ JANUS_SETTINGS = {
   -- To change one thing in a profile, write it like this instead (example: flak traps for the guns):
   -- RED_DOCTRINE = { base = "NVA_VIETNAM_1965_72", aaa = { mode = "trap" } },
   -- BLUE_DOCTRINE = { base = "US_MODERN", wta = { weapons = "free" } },   -- blue SAMs fire without identification
+
+  -- Which radars can tell aircraft types apart (NCTR). All others report only "fixed-wing" / "helicopter"; optical
+  -- sensors (Tor, Avenger, ships ...) name the type inside VISUAL_ID_RANGE metres. No Soviet / Russian radar has NCTR.
+  -- NCTR_RADARS = { ["Patriot str"] = true },     -- add a DCS radar type with = true, remove a default with = false
+  -- VISUAL_ID_RANGE = 9260,                       -- 5 NM
 
   -- Statistics in dcs.log: each site's radar time, shots, kills and losses (every STATS_EVERY seconds and at the end)
   STATS = false,

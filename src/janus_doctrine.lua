@@ -39,8 +39,8 @@
 --                    (or the one named by [cmd:Name])
 --   agBackup         mode "backup" (a short-range backup set) or "none" when all of a post's air-ground radios are down
 --   altTakeover      per crew tier: how long an alternate command post ([alt:Name] on the main post) takes to take over
---   idTime           per crew tier: a track held this long by the linked network is identified even when no sensor
---                    reports the aircraft type (probe run 6: ground EW radars never do; AWACS and SA-6/SA-11 do)
+--   idTime           per crew tier: a track held this long by the linked network is declared hostile (IFF /
+--                    procedural ID) for weapons tight; it never names the type (DESIGN 4.2: NCTR or optical only)
 --   fighterControl   who controls fighters (for a GCI script reading JANUS.gci, DESIGN 4.10): "ground" (command
 --                    posts; AWACS mainly a flying radar) or "aew" (AWACS controllers under the CRC's authority)
 --   awacsTakeover    true: an airborne command node takes over as senior controller when its parent post is lost
@@ -49,7 +49,7 @@
 --                    target; maxShooters per target; pdDiscount = weight on point-defence bids; handoffMargin = how much
 --                    better a new shooter must be before a target is handed over; minPk = below this nobody is
 --                    assigned; lead = seconds ahead a target is judged at (so the radar is up in time); weapons =
---                    "free" (engage any hostile track), "tight" (only identified tracks: IFF / NCTR / type known) or
+--                    "free" (engage any hostile track), "tight" (only tracks declared hostile: idTime or type known) or
 --                    "hold" (no new engagements) - the start state; a GCI may change it (JANUS.gci.weaponsControl)
 --   arm              anti-radiation missile defence (DESIGN 4.5, janus_arm.lua):
 --                      enabled; confirmScans sightings within confirmWindow s confirm a radar sighting (eyes or two

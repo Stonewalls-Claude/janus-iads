@@ -20,7 +20,8 @@
 | **WTA** | Weapon-target assignment: the network choosing which site engages which aircraft, so two sites do not waste missiles on one target while another gets through |
 | **Pk** | Kill probability: Janus's estimate of how likely a site is to bring down a target, from range, altitude, crew and system |
 | **Handoff** | Passing a target from one site to a better-placed one |
-| **Weapons free / tight / hold** | Free: engage any enemy aircraft. Tight: only identified ones. Hold: no new engagements |
+| **Weapons free / tight / hold** | Free: engage any enemy aircraft. Tight: only ones declared hostile. Hold: no new engagements |
+| **NCTR** | Non-cooperative target recognition: a radar that can tell an aircraft's type from its echo. Most radars give only "fixed-wing" or "helicopter" |
 | **SEAD** | Suppression of enemy air defences: attacking radars and SAMs, usually with anti-radiation missiles |
 | **ARM / HARM** | Anti-radiation missile: it flies down a radar's emissions. AGM-88 HARM, AGM-45 Shrike, Kh-58, Kh-31P, Kh-25MP, LD-10 |
 | **Suppression** | Making radars go dark: even an ARM that misses has done its job if the SAM stopped shooting |

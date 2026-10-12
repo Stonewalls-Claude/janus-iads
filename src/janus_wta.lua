@@ -185,8 +185,8 @@ local function shooterOK(n)
     and not (M.arm and M.arm.isDark(n))           -- dark against an ARM: someone else takes the target
 end
 
--- Weapons control (DESIGN 4.10 item 5): "free" engage any hostile track; "tight" only identified ones (the type is
--- known: a sensor reported it, or the doctrine's idTime of continuous track passed); "hold" no assignments at all.
+-- Weapons control (DESIGN 4.10 item 5): "free" engage any hostile track; "tight" only tracks declared hostile (the
+-- doctrine's idTime of continuous track passed, or the type is known: DESIGN 4.2); "hold" no assignments at all.
 -- The doctrine sets the start state (wta.weapons); a GCI script may change it (JANUS.gci.weaponsControl).
 W.WEAPONS = { free = true, tight = true, hold = true }
 function W.weapons(net)
@@ -210,7 +210,7 @@ local function noteUnassigned(net, tr, reason)
   if (reason == "weapons tight" or reason == "weapons hold") and net.heldLog[tr.id] ~= reason then
     net.heldLog[tr.id] = reason
     M.info("wta", string_format("%s %s held: %s%s", net.key, M.tracks.label(tr), reason,
-      reason == "weapons tight" and " (not identified)" or ""))
+      reason == "weapons tight" and " (not declared hostile)" or ""))
   end
 end
 
@@ -255,7 +255,7 @@ function W.assign(net)
   local minPk, margin, disc, lead = w.minPk or 0.15, w.handoffMargin or 0.15, w.pdDiscount or 0.5, w.lead or 0  -- mutate: ok defaults for custom tables
   for _, tr in ipairs(tracks) do
     local bids = {}
-    local held_by = (weapons == "hold" and "weapons hold") or (weapons == "tight" and not tr.typeKnown and "weapons tight")
+    local held_by = (weapons == "hold" and "weapons hold") or (weapons == "tight" and not tr.declared and "weapons tight")
     local inReach = false
     local v = tr.vel
     local reachExtra = v and lead * math_sqrt(v.x * v.x + v.z * v.z) or 0   -- mutate: ok 1 m of slack

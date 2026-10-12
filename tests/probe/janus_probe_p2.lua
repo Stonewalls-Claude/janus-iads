@@ -338,7 +338,7 @@ end
 local detState = {}       -- "sensor|target" -> "vtd" flag string
 local function flag(b) return b and "1" or "0" end
 local function sensorPoint(g)
-  local u = g:getUnit(1)
+  local u = g:getUnit(1)   -- lead: ok probe sensor groups are one unit; existence checked on the next line
   if u and u:isExist() then return u:getPoint() end
   return nil
 end

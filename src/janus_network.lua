@@ -93,11 +93,19 @@ function N.addSite(site)
   local kind = ROLE_TO_KIND[site.roleWord] or "BATTERY"
   local net = networkFor(site.coalition, site.tags.net or "main")
   local det, eng, rclass = ranges(site)
-  local hasRadar = false
-  for _, u in ipairs(site.units) do if RADAR_ROLES[u.rec.role] then hasRadar = true end end
+  -- sensor classes for type identification (DESIGN 4.2): a radar with NCTR (settings NCTR_RADARS) or an optical sensor
+  local hasRadar, nctr, optic = false, false, false
+  local nctrTypes = M.settings.NCTR_RADARS or {}
+  for _, u in ipairs(site.units) do
+    if RADAR_ROLES[u.rec.role] then
+      hasRadar = true
+      if nctrTypes[u.rec.type] then nctr = true end
+    end
+    if u.rec.optic then optic = true end
+  end
   local node = {
     name = site.name, site = site, kind = kind, net = net, tier = tierOf(site),
-    detectionRange = det, engageRange = eng, rangeClass = rclass, hasRadar = hasRadar,
+    detectionRange = det, engageRange = eng, rangeClass = rclass, hasRadar = hasRadar, nctr = nctr, optic = optic,
     airborne = site.roleWord == "AWACS", static = site.static ~= nil,   -- mutate: ok informational fields (check mode, summaries)
     agRadio = kind == "COMMS" and site.tags.ag ~= nil,   -- air-ground radio of a command post (DESIGN 4.1A)
     linkVia = nil, linkDelay = 0, agState = nil, active = true,   -- mutate: ok linkDelay is set on the first link pass

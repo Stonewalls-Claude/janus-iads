@@ -280,7 +280,7 @@ local function spawnShooter(L)
       c:setOption(O_A.id.REACTION_ON_THREAT, O_A.val.REACTION_ON_THREAT.EVADE_FIRE)
       c:setOption(O_A.id.PROHIBIT_JETT, true)
       c:setOption(O_A.id.RTB_ON_OUT_OF_AMMO, false)
-      local u = g:getUnit(1)
+      local u = g:getUnit(1)   -- lead: ok read at spawn, every unit alive
       log(string_format("AMMO %s at spawn: %s", L.shooter, u and ammoText(u) or "no unit"))
     end)
     return nil
@@ -295,7 +295,7 @@ local function status(_, t)
   safeCall("status", function()
     for _, L in ipairs(LANES) do
       local g = L.shooter and Group.getByName(L.shooter)
-      local u = g and g:isExist() and g:getUnit(1)
+      local u = g and g:isExist() and g:getUnit(1)   -- lead: ok one-aircraft shooter lane; isExist checked next
       if u and u:isExist() and not L.gone then
         local p = u:getPoint()
         local radar = Unit.getByName(L.radar)

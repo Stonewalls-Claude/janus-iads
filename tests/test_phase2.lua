@@ -197,19 +197,21 @@ do
   F.run(14)
   check(tr.vel and near(tr.vel.x, -200, 1), "velocity from successive plots (" .. tostring(tr.vel and tr.vel.x) .. ")")
   F.run(80)
-  check(not tr.typeKnown, "not identified before the doctrine's idTime (REG 90 s)")
+  check(not tr.declared, "not declared hostile before the doctrine's idTime (REG 90 s)")
   F.run(110)
-  check(tr.typeKnown and tr.typeName == "F-16C_50" and tr.idBy:find("^held") ~= nil, "identified by dwell after 90 s")
-  check(not loc.typeKnown, "a radar's own picture never identifies by dwell")
-  -- a sensor that reports the type identifies at once
+  local held = tonumber(tr.declared and tr.declBy:match("^held (%d+) s$"))
+  check(held and held >= 90 and held == math.floor(tr.declAt - tr.first), "declared hostile by dwell after 90 s (" .. tostring(tr.declBy) .. ")")
+  check(not tr.typeKnown and tr.typeName == nil, "dwell never names the type (DESIGN 4.2)")
+  check(not loc.declared, "a radar's own picture never declares by dwell")
+  -- a radar without NCTR that reports the DCS type flag still gives the class only
   F.addGroup{ name = "EW Airborne", units = { { type = "55G6 EWR", x = 30000, z = 0 } } }
   local b2 = bandit("Viper 2", 150000, 5000, 7000, "F-15C")
   F.spawn{ name = "EW Late", units = { { type = "55G6 EWR", x = 25000, z = 0 } } }
   F.sees["EW Late"] = { b2 }
   F.run(130)
   local t2 = net.tracks[b2.id]
-  check(t2 and t2.typeKnown and t2.typeName == "F-15C" and t2.idBy == "EW Late", "type flag identifies immediately")
-  check(J.tracks.label(t2) == "T" .. t2.num .. " F-15C", "label shows the type once known")
+  check(t2 and not t2.typeKnown and t2.typeName == nil, "the DCS type flag alone names nothing (55G6: no NCTR)")
+  check(J.tracks.label(t2) == "T" .. t2.num .. " fixed-wing", "label shows the class")
   local list = J.tracks.list(net.tracks)
   check(#list == 2 and list[1].num < list[2].num, "track list sorted by number")
   check(not F.logContains("ERROR JANUS"), "block 6: no Janus errors")
@@ -338,10 +340,12 @@ do
   local J = load{ RED_DOCTRINE = "NATO_COLDWAR" }
   F.sees["EW North"] = { b }
   F.run(40)
+  check(not F.emitting("SAM SA-10 Hama"), "weapons tight: nobody comes up before the track is declared hostile (60 s)")
+  F.run(80)
   check(F.emitting("SAM SA-10 Hama") and not F.emitting("SAM SA-6 Near"), "only the assigned battery comes up")
   check(J.net.networks["red/main"].wtaActive, "WTA active on a NATO network")
   F.killGroup(F.groups["SAM SA-10 Hama"])
-  F.run(80)
+  F.run(120)
   check(F.logContains("handed from SAM SA-10 Hama to SAM SA-6 Near"), "shooter destroyed -> target handed on")
   check(F.emitting("SAM SA-6 Near"), "the new shooter comes up")
 
@@ -443,8 +447,8 @@ do
   local v = tb.vel
   check(v and v.x == v.x and math.abs(v.x) < 1000, "velocity stays finite when two radars plot in the same second")
   F.run(65)
-  check(not tb.typeKnown or tb.idBy:find("^held") ~= nil, "no type flag: only dwell can identify")
-  check(tb.typeKnown and tb.idAt <= 70, "held by a VET radar: identified after 60 s, not 90")
+  check(not tb.typeKnown, "no NCTR, no optics: the type stays unknown")
+  check(tb.declared and tb.declAt <= 70, "held by a VET radar: declared hostile after 60 s, not 90")
   check(not F.logContains("ERROR JANUS"), "block 10: no Janus errors")
 end
 

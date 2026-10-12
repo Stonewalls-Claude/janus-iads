@@ -391,7 +391,7 @@ every("track sweep", 2, 10, function()
   for i = 1, #LISTENERS do
     local g = Group.getByName(LISTENERS[i])
     if g and g:isExist() then
-      local u1 = g:getUnit(1)
+      local u1 = g:getUnit(1)   -- lead: ok listener groups are one unit
       local c = g:getController()
       local dets = c and c:getDetectedTargets() or {}
       for j = 1, #dets do

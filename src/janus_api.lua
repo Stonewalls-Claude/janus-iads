@@ -3,8 +3,8 @@
 -- Events (your function is called through Janus's error guard; an error in it never stops the IADS):
 --   JANUS.subscribe(event, fn [, key]) -> handle      the same event + key replaces the earlier function
 --   JANUS.unsubscribe(handle) -> true / false
---     "engage"        { coalition, net, site, from (site handed from, or nil), track, unitId, typeName (nil if not
---                       identified), pk }                       a site was given a target
+--     "engage"        { coalition, net, site, from (site handed from, or nil), track, unitId, typeName (nil unless an
+--                       NCTR / optical sensor named it), pk }                       a site was given a target
 --     "harmDetected"  { coalition, net, arm, site, how }        the network confirmed an anti-radiation missile
 --     "emission"      { coalition, net, site, on, reason }      a site's radar went on or off
 --     "nodeLost"      { coalition, net, site, kind }            a site, post, relay or power node was destroyed

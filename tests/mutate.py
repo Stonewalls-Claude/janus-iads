@@ -171,22 +171,24 @@ def git_changes(ref, names):
 
 
 def run_harnesses(lua, root, harnesses):
-    """None = the build or Lua failed to load (skip), True = a harness failed (caught), False = all passed."""
+    """(None, why) = the build or Lua failed to load (skip), (True, why) = a harness failed (caught),
+    (False, None) = all passed."""
     b = subprocess.run([sys.executable, os.path.join('tools', 'build.py')], cwd=root, capture_output=True, text=True)
     if b.returncode:
-        return None
+        return None, 'build: ' + (b.stderr or b.stdout).strip()[-300:]
     chk = subprocess.run([lua, 'mutate_loads.lua'], cwd=root, capture_output=True, text=True)   # compiles?
     if chk.returncode:
-        return None
+        return None, 'load: ' + (chk.stderr or chk.stdout).strip()[-300:]
     for h in harnesses:
         try:
             r = subprocess.run([lua, os.path.join('tests', h), 'dist/janus.lua'], cwd=root,
                                capture_output=True, text=True, timeout=HARNESS_TIMEOUT)
         except subprocess.TimeoutExpired:
-            return True
+            return True, '%s ran over %d s' % (h, HARNESS_TIMEOUT)
         if r.returncode:
-            return True
-    return False
+            fails = [l.strip() for l in (r.stdout + r.stderr).splitlines() if 'FAIL' in l or 'rror' in l]
+            return True, '%s: %s' % (h, '; '.join(fails[:3]) or 'exit %d' % r.returncode)
+    return False, None
 
 
 def main(argv=None):
@@ -243,8 +245,9 @@ def main(argv=None):
         shutil.copytree(REPO, root, ignore=COPY_IGNORE)
         with open(os.path.join(root, 'mutate_loads.lua'), 'w') as fh:     # no `lua -e` needed (DCS luae.exe)
             fh.write('assert(loadfile("dist/janus.lua"))\n')
-        if run_harnesses(lua, root, harnesses) is not False:
-            print('the tests fail on the unbroken code: fix them first')
+        res, why = run_harnesses(lua, root, harnesses)
+        if res is not False:
+            print('the tests fail on the unbroken code: fix them first (%s)' % why)
             return 2
         tried = caught = skipped = 0
         survivors = []
@@ -254,7 +257,7 @@ def main(argv=None):
             broken[i] = new
             with open(path, 'w', encoding='utf-8', newline='\n') as fh:
                 fh.write('\n'.join(broken))
-            res = run_harnesses(lua, root, harnesses)
+            res, _ = run_harnesses(lua, root, harnesses)
             with open(path, 'w', encoding='utf-8', newline='\n') as fh:
                 fh.write('\n'.join(lines))
             if res is None:
@@ -264,10 +267,10 @@ def main(argv=None):
             if res:
                 caught += 1
             else:
-                survivors.append('%s:%d [%s] %s' % (f, i + 1, op, lines[i].strip()[:110]))
-        print('%d/%d caught (%d did not compile, skipped)' % (caught, tried, skipped))
+                survivors.append('line %d of %s [%s]: %s' % (i + 1, f, op, lines[i].strip()[:110]))
+        print('MUTATION SCORE: %d/%d caught (%d did not compile, skipped)' % (caught, tried, skipped))
         for s in survivors[:a.show]:
-            print('SURVIVED', s)
+            print('  survived ' + s)        # the queue (dcs-testq mutatejobs.parse_part) reads these lines
         if len(survivors) > a.show:
             print('... and %d more' % (len(survivors) - a.show))
         if a.gate:

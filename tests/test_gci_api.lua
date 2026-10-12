@@ -116,7 +116,7 @@ do
   local tl = G.tracks(RED)
   local t1 = tl[1]
   check(#tl == 1 and t1.num >= 1 and t1.x == 200000 and t1.y == 7000 and t1.class == "fixed-wing", "track: number, position, class")
-  check(t1.typeKnown and t1.typeName == "F-16C_50", "identified by the AWACS (type flag)")
+  check(not t1.typeKnown and t1.typeName == nil, "A-50 and 55G6 hold it: class only (no NCTR, DESIGN 4.2)")
   check(type(t1.holders) == "table" and #t1.holders == 2 and t1.lastSeen ~= nil, "holders and last-seen time")
   check(t1.vx == 0 and t1.vz == 0, "velocity fields present (0 until the second plot)")
   check(t1.id == b:getID(), "a track's id is the DCS unit ID (GCI keys on it)")

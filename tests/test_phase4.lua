@@ -249,15 +249,15 @@ do
   local a1 = red("Fencer 1", 60000, 0)
   local far = red("Fencer Far", 300000, 0)
   local J = load()
-  F.noType["EW South"] = true                 -- the FPS-117 gives no type: identification by dwell (US REG 40 s)
+  F.noType["EW South"] = true                 -- the FPS-117: declared hostile by dwell (US REG 40 s)
   F.sees["EW South"] = { a1, far }
   F.run(10)
   local G = J.gci
   local net = J.net.networks["blue/main"]
   check(G.weapons(BLUE)["blue/main"] == "tight", "US_MODERN starts weapons tight")
   check(G.weapons(1)["red/main"] == nil, "a coalition with no network: empty")
-  check(not (net.assign or {})[a1:getID()], "unidentified: not engaged")
-  check(count("blue/main T1 fixed-wing held: weapons tight (not identified)") == 1, "held logged once")
+  check(not (net.assign or {})[a1:getID()], "not declared hostile: not engaged")
+  check(count("blue/main T1 fixed-wing held: weapons tight (not declared hostile)") == 1, "held logged once")
   local cr = G.commitRequests(BLUE)
   local byId = {}
   for _, c in ipairs(cr) do byId[c.id] = c end
@@ -267,8 +267,8 @@ do
   check(cr[1].net == "blue/main" and cr[1].x == 60000 and cr[1].typeKnown == false, "a copy of the track with its network")
   cr[1].x = -1
   check(G.commitRequests(BLUE)[1].x == 60000, "copies, not Janus's tracks")
-  F.run(60)                                   -- held 40 s: identified
-  check((net.assign or {})[a1:getID()] ~= nil, "identified after idTime: engaged")
+  F.run(60)                                   -- held 40 s: declared hostile
+  check((net.assign or {})[a1:getID()] ~= nil, "declared after idTime: engaged")
   check(#G.commitRequests(BLUE) == 1 and G.commitRequests(BLUE)[1].reason == "out of reach", "only the far one is left to fighters")
   -- weapons hold from ground control
   check(G.weaponsControl(BLUE, "hold") == 1, "set weapons hold on the coalition's one network")
@@ -315,8 +315,8 @@ do
     units = { { type = "TICONDEROG", x = 100000, z = 0 } } }
   local bad = F.addGroup{ name = "Fencer 1", coalition = 1, category = AIR, units = { { type = "Su-24M", x = 170000, z = 0, alt = 5000 } } }.units[1]
   local J = load()
-  F.sees["EW Coast"] = { bad }                -- the FPS-117 gives the type (no noType): identified, weapons tight is no bar
-  F.run(10)
+  F.sees["EW Coast"] = { bad }                -- the FPS-117 has no NCTR: declared hostile after US REG idTime 40 s
+  F.run(45)
   local net = J.net.networks["blue/main"]
   local sh = J.net.nodes["SHIP CG Leyte Gulf"]
   check(sh.kind == "NAVAL" and sh.linked and J.wta.envelope(sh).R >= 100000, "the cruiser is a linked naval shooter with an envelope")
@@ -326,7 +326,7 @@ do
   -- the ship sails out of link range: unlinked, no longer offered targets, the track left to fighters
   F.move(ship.units[1], 400000, 0)
   F.move(bad, 470000, 0)
-  F.run(20)
+  F.run(65)
   check(not sh.linked and not (net.assign or {})[bad:getID()], "out of range of the CRC: unlinked, not a WTA shooter")
   -- a carrier group tagged [net:CSG] is its own flat network (its CIC): linked wherever it sails
   F.reset()

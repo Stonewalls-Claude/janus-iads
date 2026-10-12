@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 (unreleased)
+- **Track type identification gated by sensor class** (owner 2026-10-12, AI_BRAIN 4.2 d; DESIGN 4.2). A track gets
+  `typeKnown` / `typeName` only from a node that could really classify it: a radar in the new setting
+  `NCTR_RADARS` (default `Patriot str`; no Soviet or Russian radar has NCTR), an optical sensor within
+  `VISUAL_ID_RANGE` (5 NM, line of sight; works with the node's radar dark), or a later PASSIVE (ELINT) node through
+  the hook `JANUS.tracks.passiveId`. Everything else publishes the class only. The DCS detection `type` flag no
+  longer names a type on its own (AWACS, SA-6 and SA-11 set it). `JANUS.gci` v1 is unchanged: `typeKnown` and
+  `typeName` keep their meaning, fewer tracks get them.
+- The doctrine's `idTime` now **declares a track hostile** (`track.declared`; IFF / procedural ID) instead of naming
+  its type; weapons tight engages declared tracks (log: "weapons tight (not declared hostile)").
+- `tests/test_tracks_id.lua` (32 checks).
+
 ## 1.0.0 - first public release (2026-10-02)
 Everything below this heading down to 0.1.0-phase0 is in 1.0.0: there was no public release before it.
 - `JANUS.VERSION` "1.0.0".

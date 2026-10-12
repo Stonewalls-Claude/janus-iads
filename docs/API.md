@@ -49,7 +49,7 @@ JANUS.unsubscribe(handle)
 ```
 | Event | Fields (plus `event`, `t` = mission seconds) |
 |---|---|
-| `engage` | `coalition, net, site, from` (site it was handed from, or nil), `track` (number), `unitId` (DCS unit ID of the aircraft), `typeName` (nil until identified), `pk` |
+| `engage` | `coalition, net, site, from` (site it was handed from, or nil), `track` (number), `unitId` (DCS unit ID of the aircraft), `typeName` (nil unless an NCTR radar or optics named the type), `pk` |
 | `harmDetected` | `coalition, net, arm` (ARM id), `site` (who confirmed it), `how` (`radar`, `eyes` or `2 sensors`) |
 | `emission` | `coalition, net, site, on, reason` |
 | `nodeLost` | `coalition, net, site, kind` |

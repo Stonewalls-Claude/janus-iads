@@ -372,7 +372,7 @@ local function fly(viper, t0, t1, x0, vx, z0, vz)
   end
 end
 do
-  -- an identified F-16 flying straight at the site: the crew cannot tell SEAD from strike - it stays up
+  -- an F-16 flying straight at the site: the crew cannot tell SEAD from strike - it stays up
   F.reset()
   F.rnd = 0
   cmd()
@@ -383,7 +383,7 @@ do
   F.sees["EW North"] = { viper }
   fly(viper, 1, 120, 42000, -150)
   local tr = J.net.networks["red/main"].tracks[viper:getID()]
-  check(tr and tr.typeKnown and tr.typeName == "F-16C_50", "Viper identified (type flag)")
+  check(tr and tr.class == "fixed-wing" and not tr.typeKnown, "Viper held as a fixed-wing track (no NCTR on the Buk radar)")
   check(count("DARK") == 0 and F.emitting("SAM SA-6 A [emcon:always]"), "no ARM, no shutdown, whatever the aircraft type")
   noErrors("block 11a")
   -- caution: extra seconds down after the threat time, by crew tier (ACE 0: back at once, GRN 60)
@@ -968,7 +968,7 @@ do
   F.sees["SAM SA-6 A [emcon:always]"] = { viper }
   F.run(3)
   local w = harm(viper, 40000, 0, 600)
-  check(count("ARM A1 launch seen by SAM SA-6 A [emcon:always] (T1 F-16C_50)") == 1, "the SA-6 holding the shooter sees the launch")
+  check(count("ARM A1 launch seen by SAM SA-6 A [emcon:always] (T1 fixed-wing)") == 1, "the SA-6 holding the shooter sees the launch")
   check(got[1] and got[1].how == "launch" and got[1].site == "SAM SA-6 A [emcon:always]", "harmDetected (launch)")
   local th = J.net.networks["red/main"].arms.A1
   check(th and th.netPos.x == 40000 and th.netVel.x == -600 and th.netConfirmed == F.time, "the network fix at launch")

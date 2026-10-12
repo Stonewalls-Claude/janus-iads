@@ -126,15 +126,21 @@ to kill. Not yet seen: a `.Command Center` destroyed, ME-placed statics.
   classification (fixed-wing / helicopter / missile / unknown) and the sensors that hold it.
 - **Classification:** Janus uses the DCS category of the detected object where DCS reports it. Its
   own kinematic rules only fill gaps; Janus never waits minutes to decide.
-- **Identification (agreed 2026-09-29):** a track's exact aircraft type is known only when DCS says the detecting
-  sensor knows it: `getDetectedTargets()` returns a `type` flag per detection (DCS's own model of NCTR / ESM /
-  visual ID). Once any sensor holding the track reports `type = true`, the track carries its DCS type name from
-  then on (until the track is dropped). Until then it has only its class. Doctrine can add an ID delay by crew tier.
-  **Probe run 6 (2026-09-30):** ground EW radars *never* report the type (313 km to overhead); AWACS (E-3A, A-50)
-  always do from first contact (up to 380 km); SA-11 from ~100 km, SA-6 from ~50 km, SA-10 and Hawk only inside
-  ~15 km; SA-2, SA-3 and Patriot never. So a network with an AWACS or Buk/Kub radars identifies through them; for a
-  ground-EW-only network the doctrine fallback applies: a track held continuously by a linked command node for the
-  doctrine's ID time (by crew tier) gets its type. Phase 2 builds both.
+- **Identification: type gated by sensor class (owner 2026-10-12, AI_BRAIN 4.2 d; replaces the 2026-09-29 rule).**
+  A track may carry `typeKnown = true` / `typeName` only when a node that holds it could really classify it:
+  - **NCTR radar:** an EW or fire-control radar with non-cooperative target recognition, listed per DCS radar type
+    in settings `NCTR_RADARS` (default: `Patriot str`). No Soviet or Russian EW or SAM radar has it (P-19, 55G6,
+    1L13, Kub, S-75/125): they give the class only.
+  - **Visual / optical:** the track within `VISUAL_ID_RANGE` (5 NM) of a node with an optical sensor (unit data
+    `optic`: Tor, Buk launchers, Avenger, Gepard, ships ...), in line of sight, whether or not its radar holds it.
+  - **Passive ELINT:** a Kolchuga-class node naming an emitter: COMMANDER 5.1's later `PASSIVE` sensor; a hook only
+    (`tracks.passiveId(node, track)`, nodes with `passive = true`).
+  Otherwise only the class (fixed-wing / helicopter); GCI estimates the type from its intel (`M.INTEL`). The DCS
+  detection `type` flag no longer names a type by itself: probe run 6 found AWACS, SA-11 and SA-6 setting it,
+  which the rule above does not allow.
+  **Hostile identification is separate:** a track held continuously by the linked network for the doctrine's
+  `idTime[tier]` (IFF / procedural ID), or with a known type, is **declared hostile** (`declared`); weapons tight
+  engages declared tracks. It never names the type.
 
 ### 4.3 Threat evaluation and weapon-target assignment (WTA)
 - **Threat score:** time-to-weapons-release against defended assets, closure, altitude and type.
@@ -387,8 +393,8 @@ Tests: `tests/test_phase2.lua`. Bench: `tests/bench/janus_bench_04.lua` (DCS gat
   command root) while the main post is up; `altTakeover[tier]` after the main post goes down (destroyed, equipment,
   power) it takes over (`takeover` callback); if the main post comes back, the alternate stands down again.
 - **Track picture.** Tracks carry a number (stable per aircraft across pictures), class, position, velocity (from
-  successive plots), the sensors holding them and identification: the DCS type once a detection reports `type`, or on
-  the network picture after the doctrine's `idTime[tier]` of continuous track (`idBy = "held N s"`). A detection with
+  successive plots), the sensors holding them, the type only from NCTR / optical / ELINT (4.2; `idBy` names the
+  node and how) and `declared` after the doctrine's `idTime[tier]` on the network picture (`declBy = "held N s"`). A detection with
   neither a visual nor a range fix is ignored.
 - **WTA** (`wta` doctrine fields, every 2 s, per network, linked batteries and point defence only):
   - Envelope per battery from DCS data: range from the launchers, minimum range / altitude band / channels from the
@@ -523,8 +529,8 @@ GCI tick is cheap):
   start.
 - **tracks(coal)** - the coalition's fused air picture (4.2): the tracks Janus already holds, never true positions.
   Each track: id, position, altitude, velocity, classification, time last seen, and the radars/command nodes that
-  hold it, plus **identification**: `typeName` (the DCS type, e.g. `F-14B`) and `typeKnown = true` only once a sensor
-  holding the track has identified it (below); otherwise `typeName = nil` and only the class (fixed-wing /
+  hold it, plus **identification**: `typeName` (the DCS type, e.g. `F-14B`) and `typeKnown = true` only once a node
+  that can classify it (4.2: NCTR radar, optics inside 5 NM, later ELINT) has named it; otherwise `typeName = nil` and only the class (fixed-wing /
   helicopter / missile) is given, and a consumer assumes the worst case for that class. GCI needs the type for its
   threat logic (missile reach, "outranged", "hot on us"); Janus's own WTA uses it for kill probability. A seat sees the picture its command node sees (with the doctrine's link delay, stale when cut off). This
   is what lets GCI drop its own picture.
@@ -549,8 +555,8 @@ GCI tick is cheap):
 - `commitRequests(coal)` -> track copies (as `tracks`) plus `reason`, `threat`, `net`, for every aircraft in a
   network's picture that no shooter is assigned to; one entry per aircraft across the coalition's networks; none for an
   aircraft another network engages; sorted by threat (highest first), then track number. Reasons: "out of reach" (no
-  shooter could reach it), "weapons hold", "weapons tight" (not identified), "no shooter free".
-- Weapons control per network: "free" (engage any enemy track), "tight" (identified tracks only), "hold" (none).
+  shooter could reach it), "weapons hold", "weapons tight" (not declared hostile), "no shooter free".
+- Weapons control per network: "free" (engage any enemy track), "tight" (tracks declared hostile only, 4.2), "hold" (none).
   Doctrine `wta.weapons` sets the start state (NATO_COLDWAR, US_MODERN: tight; others free). `weapons(coal)` ->
   `{ [netKey] = state }`; `weaponsControl(coal, state [, netName or key])` -> number of networks changed (0 for an
   unknown state or network); logged "<net> weapons HOLD (was tight): ground control".
