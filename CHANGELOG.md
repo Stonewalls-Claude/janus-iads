@@ -3,7 +3,8 @@
 ## 1.1.0 (unreleased)
 - **Track type identification gated by sensor class** (owner 2026-10-12, AI_BRAIN 4.2 d; DESIGN 4.2). A track gets
   `typeKnown` / `typeName` only from a node that could really classify it: a radar in the new setting
-  `NCTR_RADARS` (default `Patriot str`; no Soviet or Russian radar has NCTR), an optical sensor within
+  `NCTR_RADARS` (default `Patriot str` and the NASAMS Sentinel `NASAMS_Radar_MPQ64F1`; AWACS and Aegis identify by
+  IFF / ESM, not NCTR; no Soviet or Russian radar has NCTR), an optical sensor within
   `VISUAL_ID_RANGE` (5 NM, line of sight; works with the node's radar dark), or a later PASSIVE (ELINT) node through
   the hook `JANUS.tracks.passiveId`. Everything else publishes the class only. The DCS detection `type` flag no
   longer names a type on its own (AWACS, SA-6 and SA-11 set it). `JANUS.gci` v1 is unchanged: `typeKnown` and

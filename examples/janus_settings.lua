@@ -30,7 +30,8 @@ JANUS_SETTINGS = {
 
   -- Which radars can tell aircraft types apart (NCTR). All others report only "fixed-wing" / "helicopter"; optical
   -- sensors (Tor, Avenger, ships ...) name the type inside VISUAL_ID_RANGE metres. No Soviet / Russian radar has NCTR.
-  -- NCTR_RADARS = { ["Patriot str"] = true },     -- add a DCS radar type with = true, remove a default with = false
+  -- NCTR_RADARS = { ["Patriot str"] = true, ["NASAMS_Radar_MPQ64F1"] = true },   -- the defaults; add a DCS radar
+  --                                                 type with = true, remove one with = false
   -- VISUAL_ID_RANGE = 9260,                       -- 5 NM
 
   -- Statistics in dcs.log: each site's radar time, shots, kills and losses (every STATS_EVERY seconds and at the end)

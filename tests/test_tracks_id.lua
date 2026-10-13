@@ -65,6 +65,8 @@ do
   F.sees["EW Coast"] = { fencer }
   F.run(8)
   check(node("SAM Patriot").nctr and not node("EW Coast").nctr, "Patriot str has NCTR by default, the FPS-117 not")
+  check(J.settings.NCTR_RADARS["NASAMS_Radar_MPQ64F1"] == true and J.settings.NCTR_RADARS["Hawk sr"] == nil
+    and J.settings.NCTR_RADARS["Hawk tr"] == nil, "default list: Patriot and the NASAMS Sentinel, not the Hawk")
   local tr = J.net.networks["blue/main"].tracks[fencer:getID()]
   check(tr and not tr.typeKnown, "the FPS-117 alone: class only")
   J.setEmcon("SAM Patriot", "always")

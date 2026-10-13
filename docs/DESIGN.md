@@ -129,8 +129,11 @@ to kill. Not yet seen: a `.Command Center` destroyed, ME-placed statics.
 - **Identification: type gated by sensor class (owner 2026-10-12, AI_BRAIN 4.2 d; replaces the 2026-09-29 rule).**
   A track may carry `typeKnown = true` / `typeName` only when a node that holds it could really classify it:
   - **NCTR radar:** an EW or fire-control radar with non-cooperative target recognition, listed per DCS radar type
-    in settings `NCTR_RADARS` (default: `Patriot str`). No Soviet or Russian EW or SAM radar has it (P-19, 55G6,
-    1L13, Kub, S-75/125): they give the class only.
+    in settings `NCTR_RADARS` (default: `Patriot str` - NCTR since Configuration 3+ / MPQ-65A - and
+    `NASAMS_Radar_MPQ64F1` - the Sentinel). No Soviet or Russian EW or SAM radar has it (P-19, 55G6, 1L13, Kub,
+    S-75/125): they give the class only. Researched 2026-10-12 and left out: AWACS (E-3, E-2) and Aegis ships identify
+    by IFF and ESM, not NCTR (their ESM names emitters: the later PASSIVE sensor); Hawk, FPS-117, Roland, Rapier and
+    Gepard radars have none documented (Roland, Rapier, Gepard and ships have optics, so they name types within 5 NM).
   - **Visual / optical:** the track within `VISUAL_ID_RANGE` (5 NM) of a node with an optical sensor (unit data
     `optic`: Tor, Buk launchers, Avenger, Gepard, ships ...), in line of sight, whether or not its radar holds it.
   - **Passive ELINT:** a Kolchuga-class node naming an emitter: COMMANDER 5.1's later `PASSIVE` sensor; a hook only

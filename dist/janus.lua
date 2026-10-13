@@ -45,8 +45,11 @@ M.defaults = {
   -- recognition). Every other radar gives the class only ("fixed-wing" / "helicopter"); optical sensors name the
   -- type inside VISUAL_ID_RANGE. No Soviet or Russian EW or SAM radar has NCTR. Add a DCS radar type with
   -- NCTR_RADARS = { ["<type>"] = true }; remove a default with ["Patriot str"] = false.
+  -- Researched 2026-10-12 (DESIGN 4.2): AWACS (E-3, E-2) and Aegis identify by IFF and ESM, not NCTR; Hawk, FPS-117,
+  -- Roland, Rapier and Gepard radars have none documented (Roland, Rapier, Gepard and ships have optics).
   NCTR_RADARS = {
-    ["Patriot str"] = true,   -- AN/MPQ-53 target classification
+    ["Patriot str"] = true,             -- NCTR since Configuration 3+ (AN/MPQ-65A); DCS models the older MPQ-53
+    ["NASAMS_Radar_MPQ64F1"] = true,    -- AN/MPQ-64 Sentinel: NCTR "to identify threat aircraft"
   },
   VISUAL_ID_RANGE = 9260,    -- metres (5 NM): an optical sensor names the type of an aircraft this close
   -- Role words at the start of a group name (case-insensitive). Change these if your naming differs.
